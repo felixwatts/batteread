@@ -1,9 +1,12 @@
 use bluetooth_serial_port_async::{BtProtocol, BtSocket};
 use tokio_modbus::prelude::*;
 
+// Could be useful:
+// https://github.com/FurTrader/OverkillSolarBMS/blob/master/Comm_Protocol_Documentation/JBD_REGISTER_MAP.md
+
 const DEVICE_NAME: &'static str = "HC_BT1234";
-const REG_STATE_OF_CHARGE: u16 = 0x0;
-const LEN_STATE_OF_CHARGE: u16 = 1;
+const REG_BASIC_INFO: u16 = 0x03;
+const LEN_BASIC_INFO: u16 = 1;
 
 #[tokio::main]
 async fn main() {
@@ -24,9 +27,12 @@ async fn main() {
     // let slave = Slave(0x01);
     let mut ctx = rtu::attach(stream);
 
-    println!("Reading a sensor value");
-    let rsp = ctx.read_holding_registers(REG_STATE_OF_CHARGE, LEN_STATE_OF_CHARGE).await.unwrap().unwrap();
-    println!("Sensor value is: {rsp:?}");
+    println!("Reading BASIC_INFO");
+    let rsp = ctx.read_holding_registers(REG_BASIC_INFO, LEN_BASIC_INFO).await.unwrap().unwrap();
+    println!("BASIC_INFO value is: {rsp:?}");
+
+    let pack_voltage = (rsp[0] as f32) / 100.0;
+    println!("Pack Voltage is {pack_voltage:.2}V");
 
     println!("Disconnecting");
     ctx.disconnect().await.unwrap().unwrap();
