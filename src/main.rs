@@ -1,15 +1,22 @@
 use bluetooth_serial_port_async::{BtProtocol, BtSocket};
 use tokio_modbus::prelude::*;
+use btleplug::api::{Central, CharPropFlags, Peripheral, ScanFilter};
+use btleplug::api::Manager as _;
+use btleplug::platform::Manager;
 
 // Could be useful:
 // https://github.com/FurTrader/OverkillSolarBMS/blob/master/Comm_Protocol_Documentation/JBD_REGISTER_MAP.md
 
-const DEVICE_NAME: &'static str = "HC_BT1234";
+const DEVICE_NAME: &'static str = "BT_HC6172";
 const REG_BASIC_INFO: u16 = 0x03;
 const LEN_BASIC_INFO: u16 = 1;
 
 #[tokio::main]
 async fn main() {
+    print_bms_details().await;
+}
+
+async fn print_bms_state() {
     let devices = bluetooth_serial_port_async::scan_devices(std::time::Duration::from_secs(20)).unwrap();
     if devices.len() == 0 {
         panic!("No devices found");
@@ -172,13 +179,48 @@ async fn main() {
 //     // }
 // }
 
-// async fn find_peripheral<T>(peripherals: Vec<T>, device_name: &'static str) -> Option<T> where T: Peripheral {
-//     for p in peripherals.into_iter() {
-//         let local_name = p.properties().await.ok().flatten().map(|p| p.local_name).flatten();
-//         match local_name {
-//             Some(name) if name == device_name => return Some(p),
-//             _ => {}
-//         }
-//     }
-//     return None
-// }
+async fn print_bms_details() {
+    // Initialize the Bluetooth manager
+    let manager = Manager::new().await.unwrap();
+
+    // Get the first Bluetooth adapter
+    let adapters = manager.adapters().await.unwrap();
+    let central = adapters.into_iter().nth(0).expect("No Bluetooth adapter found");
+
+    // Get the BMS peripheral
+    let peripherals = central.peripherals().await.unwrap();
+    let peripheral = find_peripheral(peripherals, DEVICE_NAME).await.expect("Bluetooth device not found");
+
+    // Connect to the device
+    peripheral.connect().await.unwrap();
+    peripheral.discover_services().await.unwrap();
+
+    // Print characteristics and their values
+    for c in peripheral.characteristics().into_iter() {
+        let uuid = c.uuid;
+        let props = c.properties;
+        print!("{uuid} {props:?} ");
+
+        if props.contains(CharPropFlags::READ) {
+            let read_result = peripheral.read(&c).await;
+            match read_result {
+                Ok(data) => println!("= {data:?}"),
+                Err(e) => println!("error: {e}"),
+            }
+        } else {
+            println!("")
+        }
+    }
+
+    async fn find_peripheral<T>(peripherals: Vec<T>, device_name: &'static str) -> Option<T> where T: Peripheral {
+        for p in peripherals.into_iter() {
+            let local_name = p.properties().await.ok().flatten().map(|p| p.local_name).flatten();
+            match local_name {
+                Some(name) if name == device_name => return Some(p),
+                _ => {}
+            }
+        }
+        return None
+    }
+}
+
