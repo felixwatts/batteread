@@ -2,7 +2,6 @@ use bluetooth_serial_port_async::{BtAddr, BtProtocol, BtSocket};
 use tokio_modbus::prelude::*;
 use btleplug::api::{Central, CharPropFlags, Peripheral, ScanFilter};
 use btleplug::api::Manager as _;
-use btleplug::platform::{Manager, Peripheral};
 
 // Could be useful:
 // https://github.com/FurTrader/OverkillSolarBMS/blob/master/Comm_Protocol_Documentation/JBD_REGISTER_MAP.md
