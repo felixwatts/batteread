@@ -170,6 +170,11 @@ async fn main() {
         }
     }
 
+    // -----
+
+    let mut socket = BtSocket::new(BtProtocol::RFCOMM).unwrap();
+    socket.connect(peripheral.address()).unwrap();
+
     // 00001534-1212-efde-1523-785feabcd123 READ : Device Firmware Version
     // 00002a26-0000-1000-8000-00805f9b34fb READ : Firmware Revision String
     // 00002a29-0000-1000-8000-00805f9b34fb READ : Manufacturer Name String
