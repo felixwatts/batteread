@@ -1,4 +1,4 @@
-// use bluetooth_serial_port_async::{BtAddr, BtProtocol, BtSocket};
+use bluetooth_serial_port_async::{BtProtocol, BtSocket};
 // use tokio_modbus::prelude::*;
 // use btleplug::api::{Central, CharPropFlags, Peripheral, ScanFilter};
 // use btleplug::api::Manager as _;
