@@ -188,6 +188,8 @@ async fn print_bms_details() {
     let adapters = manager.adapters().await.unwrap();
     let central = adapters.into_iter().nth(0).expect("No Bluetooth adapter found");
 
+    central.start_scan(ScanFilter::default()).await;
+
     // Get the BMS peripheral
     let peripherals = central.peripherals().await.unwrap();
 
