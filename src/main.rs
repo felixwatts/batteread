@@ -203,8 +203,6 @@ async fn print_bms_details() {
 
     let peripheral = find_peripheral(peripherals, DEVICE_NAME).await.expect("Bluetooth device not found");
 
-    let p = Peripheral::
-
     // Connect to the device
     peripheral.connect().await.unwrap();
     peripheral.discover_services().await.unwrap();
