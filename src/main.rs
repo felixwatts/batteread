@@ -2,19 +2,20 @@ use bluetooth_serial_port_async::{BtAddr, BtProtocol, BtSocket};
 use tokio_modbus::prelude::*;
 use btleplug::api::{Central, CharPropFlags, Peripheral, ScanFilter};
 use btleplug::api::Manager as _;
-use btleplug::platform::Manager;
+use btleplug::platform::{Manager, Peripheral};
 
 // Could be useful:
 // https://github.com/FurTrader/OverkillSolarBMS/blob/master/Comm_Protocol_Documentation/JBD_REGISTER_MAP.md
 
 const DEVICE_NAME: &'static str = "BT_HC6172";
-// const DEVICE_MAC_ADDRESS: BtAddr = BtAddr([0,0,0,0,0,0]);
+const DEVICE_MAC_ADDRESS: BtAddr = BtAddr([0xC3,0x7A,0x68,0x17,0x6B,0xFC]);
 const REG_BASIC_INFO: u16 = 0x03;
 const LEN_BASIC_INFO: u16 = 1;
 
 #[tokio::main]
 async fn main() {
-    print_bms_details().await;
+    // print_bms_details().await;
+    print_bms_state().await;
 }
 
 async fn print_bms_state() {
@@ -25,25 +26,25 @@ async fn print_bms_state() {
 
     println!("Found bluetooth devices {:?}", devices);
 
-    let device = devices.iter().find(|d| d.name == DEVICE_NAME).expect("BMS device not found");
+    // let device = devices.iter().find(|d| d.name == DEVICE_NAME).expect("BMS device not found");
 
-    let mut socket = BtSocket::new(BtProtocol::RFCOMM).unwrap();
-    socket.connect(device.addr).unwrap();
+    // let mut socket = BtSocket::new(BtProtocol::RFCOMM).unwrap();
+    // socket.connect(device.addr).unwrap();
 
-    let stream = socket.get_stream();
+    // let stream = socket.get_stream();
 
-    // let slave = Slave(0x01);
-    let mut ctx = rtu::attach(stream);
+    // // let slave = Slave(0x01);
+    // let mut ctx = rtu::attach(stream);
 
-    println!("Reading BASIC_INFO");
-    let rsp = ctx.read_holding_registers(REG_BASIC_INFO, LEN_BASIC_INFO).await.unwrap().unwrap();
-    println!("BASIC_INFO value is: {rsp:?}");
+    // println!("Reading BASIC_INFO");
+    // let rsp = ctx.read_holding_registers(REG_BASIC_INFO, LEN_BASIC_INFO).await.unwrap().unwrap();
+    // println!("BASIC_INFO value is: {rsp:?}");
 
-    let pack_voltage = (rsp[0] as f32) / 100.0;
-    println!("Pack Voltage is {pack_voltage:.2}V");
+    // let pack_voltage = (rsp[0] as f32) / 100.0;
+    // println!("Pack Voltage is {pack_voltage:.2}V");
 
-    println!("Disconnecting");
-    ctx.disconnect().await.unwrap().unwrap();
+    // println!("Disconnecting");
+    // ctx.disconnect().await.unwrap().unwrap();
 }
 
 // use bluetooth_serial_port::{BtProtocol, BtSocket};
@@ -201,6 +202,8 @@ async fn print_bms_details() {
     }
 
     let peripheral = find_peripheral(peripherals, DEVICE_NAME).await.expect("Bluetooth device not found");
+
+    let p = Peripheral::
 
     // Connect to the device
     peripheral.connect().await.unwrap();
