@@ -5,14 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-# Feature to disable any tests which rely on hardware availability
-# eg: tests which attempt to create a BtSocket.
-test_without_hardware = []
-
 [dependencies]
 btleplug = "*"
-bluetooth-serial-port-async = { version = "*", git = "https://github.com/felixwatts/bluetooth-serial-port-async.git", features = ["tokio"], default-features = false }
+# bluetooth-serial-port-async = { version = "*", git = "https://github.com/felixwatts/bluetooth-serial-port-async.git", features = ["tokio"], default-features = false }
 tokio = { version = "1", features = ["full"] }
-tokio-modbus = { version = "0.13.1", default-features = false, features = ["rtu"] }
+# tokio-modbus = { version = "0.13.1", default-features = false, features = ["rtu"] }
 
