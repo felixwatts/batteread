@@ -1,4 +1,4 @@
-use bluetooth_serial_port_async::{BtProtocol, BtSocket};
+use bluetooth_serial_port_async::{BtAddr, BtProtocol, BtSocket};
 use tokio_modbus::prelude::*;
 use btleplug::api::{Central, CharPropFlags, Peripheral, ScanFilter};
 use btleplug::api::Manager as _;
@@ -8,6 +8,7 @@ use btleplug::platform::Manager;
 // https://github.com/FurTrader/OverkillSolarBMS/blob/master/Comm_Protocol_Documentation/JBD_REGISTER_MAP.md
 
 const DEVICE_NAME: &'static str = "BT_HC6172";
+// const DEVICE_MAC_ADDRESS: BtAddr = BtAddr([0,0,0,0,0,0]);
 const REG_BASIC_INFO: u16 = 0x03;
 const LEN_BASIC_INFO: u16 = 1;
 
