@@ -116,7 +116,7 @@ use bluetooth_serial_port_async::{BtAddr, BtProtocol, BtSocket};
 //     }
 // }
 
-use btleplug::api::{Central, CharPropFlags, Peripheral, ScanFilter};
+use btleplug::api::{Central, CharPropFlags, Characteristic, Peripheral, ScanFilter};
 use btleplug::api::Manager as _;
 use btleplug::platform::Manager;
 // use tokio_modbus::prelude::*;
@@ -156,6 +156,19 @@ async fn main() {
 
     // // Setup Modbus client
 
+    println!("SERVICES\n");
+
+    let services = peripheral.services();
+    for s in services.iter() {
+        println!("{s:?}");
+        let characteristics = s.characteristics;
+        for c in characteristics.iter() {
+            println!("    {c:?}");
+        }
+    }
+
+    println!("CHARACTERISTICS\n");
+
     for c in peripheral.characteristics().into_iter() {
         let uuid = c.uuid;
         let props = c.properties;
@@ -170,14 +183,16 @@ async fn main() {
         }
     }
 
-    // -----
+    // 00001531-1212-efde-1523-785feabcd123 WRITE | NOTIFY : Device firmware update
+    // 00001532-1212-efde-1523-785feabcd123 WRITE_WITHOUT_RESPONSE : Frimware packet
+    // 00001534-1212-efde-1523-785feabcd123 READ : Device Firmware Version = 1 0
+    // 00002a26-0000-1000-8000-00805f9b34fb READ : Firmware Revision String = B0163,V1.05
+    // 00002a29-0000-1000-8000-00805f9b34fb READ : Manufacturer Name String = SKYLAB
 
-    let mut socket = BtSocket::new(BtProtocol::RFCOMM).unwrap();
-    socket.connect(BtAddr(peripheral.address().into_inner())).unwrap();
+    // 00002a05-0000-1000-8000-00805f9b34fb INDICATE : GATT service changed
 
-    // 00001534-1212-efde-1523-785feabcd123 READ : Device Firmware Version
-    // 00002a26-0000-1000-8000-00805f9b34fb READ : Firmware Revision String
-    // 00002a29-0000-1000-8000-00805f9b34fb READ : Manufacturer Name String
+    // 6e400002-b5a3-f393-e0a9-e50e24dcca9e WRITE_WITHOUT_RESPONSE | WRITE : UART write?
+    // 6e400003-b5a3-f393-e0a9-e50e24dcca9e NOTIFY : UART read?
 
     // tokio_modbus::prelude::tcp::connect(peripheral);
     // let socket_addr = "192.168.0.100:502"; // Replace with your Modbus server address
@@ -245,5 +260,18 @@ async fn find_peripheral<T>(peripherals: Vec<T>, device_name: &'static str) -> O
         }
     }
     return None
+}
+
+struct BleUartStream{
+}
+
+impl tokio::io::AsyncRead for BleUartStream{
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.r
+    }
 }
 
