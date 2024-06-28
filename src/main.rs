@@ -185,12 +185,12 @@ impl<T> AsyncRead for NordicUartStream<T> where T: Peripheral + Unpin {
             let mut notifications = peripheral.notifications().await?;
             let notification = notifications.next().await.expect("NordicUartStream notify feed closed.");
 
+            println!("Received notifcation");
+            println!("{notification:?}");
+
             assert!(notification.uuid == NORDIC_UART_READ_CHARACTERISTIC().uuid, "Unexpected characteristic in notify");
 
             Ok(notification.value)
-            
-            // let result = peripheral.read(&NORDIC_UART_READ_CHARACTERISTIC()).await;
-            // result
         };
         
         let data:Vec<u8> = std::task::ready!(Box::pin(fut).poll_unpin(cx)).map_err(|e: btleplug::Error| tokio::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
