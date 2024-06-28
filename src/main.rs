@@ -260,17 +260,3 @@ async fn find_peripheral<T>(peripherals: Vec<T>, device_name: &'static str) -> O
     }
     return None
 }
-
-struct BleUartStream{
-}
-
-impl tokio::io::AsyncRead for BleUartStream{
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        self.r
-    }
-}
-
