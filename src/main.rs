@@ -1,4 +1,4 @@
-use bluetooth_serial_port_async::{BtProtocol, BtSocket};
+use bluetooth_serial_port_async::{BtAddr, BtProtocol, BtSocket};
 // use tokio_modbus::prelude::*;
 // use btleplug::api::{Central, CharPropFlags, Peripheral, ScanFilter};
 // use btleplug::api::Manager as _;
@@ -173,7 +173,7 @@ async fn main() {
     // -----
 
     let mut socket = BtSocket::new(BtProtocol::RFCOMM).unwrap();
-    socket.connect(peripheral.address()).unwrap();
+    socket.connect(BtAddr(peripheral.address().into_inner())).unwrap();
 
     // 00001534-1212-efde-1523-785feabcd123 READ : Device Firmware Version
     // 00002a26-0000-1000-8000-00805f9b34fb READ : Firmware Revision String
