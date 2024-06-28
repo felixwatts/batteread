@@ -19,17 +19,17 @@ async fn main() {
 }
 
 async fn print_bms_state() {
-    let devices = bluetooth_serial_port_async::scan_devices(std::time::Duration::from_secs(20)).unwrap();
-    if devices.len() == 0 {
-        panic!("No devices found");
-    }
+    // let devices = bluetooth_serial_port_async::scan_devices(std::time::Duration::from_secs(20)).unwrap();
+    // if devices.len() == 0 {
+    //     panic!("No devices found");
+    // }
 
-    println!("Found bluetooth devices {:?}", devices);
+    // println!("Found bluetooth devices {:?}", devices);
 
     // let device = devices.iter().find(|d| d.name == DEVICE_NAME).expect("BMS device not found");
 
-    // let mut socket = BtSocket::new(BtProtocol::RFCOMM).unwrap();
-    // socket.connect(device.addr).unwrap();
+    let mut socket = BtSocket::new(BtProtocol::RFCOMM).unwrap();
+    socket.connect(DEVICE_MAC_ADDRESS).unwrap();
 
     // let stream = socket.get_stream();
 
