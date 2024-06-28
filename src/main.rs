@@ -117,26 +117,6 @@ async fn main() {
 
     let p2 = peripheral.clone();
 
-    let p3 = peripheral.clone();
-    let join_handle = tokio::spawn(async move {
-        println!("Waiting for notifications...");
-        loop {
-            let result = p3.notifications().await;
-
-            println!("Received notifcation");
-
-            match result {
-                Ok(stream) => {
-                    stream.for_each(|i| async move { println!("{i:?}") }).await;
-                },
-                Err(e) => {
-                    println!("{e:?}");
-                    break;
-                }
-            }
-        }
-    });
-
     // Try to set up modbus stream
     let nordic_uart_stream = NordicUartStream::new(p2);
     let mut modbus = tokio_modbus::prelude::rtu::attach(nordic_uart_stream);
