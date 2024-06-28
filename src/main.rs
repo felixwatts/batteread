@@ -182,11 +182,18 @@ impl<T> AsyncRead for NordicUartStream<T> where T: Peripheral + Unpin {
     ) -> Poll<tokio::io::Result<()>> {
         let peripheral = &mut self.peripheral;
         let fut = async move {
-            let result = peripheral.read(&NORDIC_UART_READ_CHARACTERISTIC()).await;
-            result
+            let mut notifications = peripheral.notifications().await?;
+            let notification = notifications.next().await.expect("NordicUartStream notify feed closed.");
+
+            assert!(notification.uuid == NORDIC_UART_READ_CHARACTERISTIC().uuid, "Unexpected characteristic in notify");
+
+            Ok(notification.value)
+            
+            // let result = peripheral.read(&NORDIC_UART_READ_CHARACTERISTIC()).await;
+            // result
         };
         
-        let data:Vec<u8> = std::task::ready!(Box::pin(fut).poll_unpin(cx)).map_err(|e| tokio::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+        let data:Vec<u8> = std::task::ready!(Box::pin(fut).poll_unpin(cx)).map_err(|e: btleplug::Error| tokio::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
         buf.put_slice(&data);
         Poll::Ready(Ok(()))
     }
