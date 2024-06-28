@@ -8,7 +8,7 @@ use tokio::task::futures;
 use tokio_modbus::prelude::*;
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
-use futures_util::FutureExt;
+use futures_util::{FutureExt, StreamExt};
 
 fn NORDIC_UART_WRITE_CHARACTERISTIC() -> Characteristic {
     Characteristic {
@@ -108,6 +108,26 @@ async fn main() {
     let result = peripheral.read(&NORDIC_UART_READ_CHARACTERISTIC()).await;
 
     println!("{result:?}");
+
+    println!("Try subscribe Nordic UART");
+
+    let result = peripheral.subscribe(&NORDIC_UART_READ_CHARACTERISTIC()).await;
+
+    println!("{result:?}");
+
+    println!("Wait for notifications");
+    loop {
+        let result = peripheral.notifications().await;
+        match result {
+            Ok(stream) => {
+                stream.for_each(|i| async move { println!("{i:?}") }).await;
+            },
+            Err(e) => {
+                println!("{e:?}");
+                break;
+            }
+        }
+    }
 
     // let nordic_uart_stream = NordicUartStream::new(peripheral);
 
