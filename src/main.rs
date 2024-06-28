@@ -115,23 +115,35 @@ async fn main() {
 
     println!("{result:?}");
 
-    println!("Wait for notifications");
-    loop {
-        let result = peripheral.notifications().await;
-        match result {
-            Ok(stream) => {
-                stream.for_each(|i| async move { println!("{i:?}") }).await;
-            },
-            Err(e) => {
-                println!("{e:?}");
-                break;
+    let p2 = peripheral.clone();
+
+    let p3 = peripheral.clone();
+    let join_handle = tokio::spawn(async move {
+        println!("Waiting for notifications...");
+        loop {
+            let result = p3.notifications().await;
+
+            println!("Received notifcation");
+
+            match result {
+                Ok(stream) => {
+                    stream.for_each(|i| async move { println!("{i:?}") }).await;
+                },
+                Err(e) => {
+                    println!("{e:?}");
+                    break;
+                }
             }
         }
-    }
+    });
 
-    // let nordic_uart_stream = NordicUartStream::new(peripheral);
+    // Try to set up modbus stream
+    let nordic_uart_stream = NordicUartStream::new(p2);
+    let mut modbus = tokio_modbus::prelude::rtu::attach(nordic_uart_stream);
 
-    // let modbus = tokio_modbus::prelude::rtu::attach(nordic_uart_stream);
+    println!("send modbus request");
+    let result = modbus.read_holding_registers(0x0, 1).await;
+    println!("modbus result: {result:?}");
 }
 
 async fn find_peripheral<T>(peripherals: Vec<T>, device_name: &'static str) -> Option<T> where T: Peripheral {
