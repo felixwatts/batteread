@@ -161,8 +161,7 @@ async fn main() {
     let services = peripheral.services();
     for s in services.iter() {
         println!("{s:?}");
-        let characteristics = s.characteristics;
-        for c in characteristics.iter() {
+        for c in s.characteristics.iter() {
             println!("    {c:?}");
         }
     }
