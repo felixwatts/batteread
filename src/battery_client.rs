@@ -73,13 +73,13 @@ impl BatteryClient{
     // A verbatim message to send which requests the state of change and related data
     const REQ_SOC: [u8; 8] = [0x01, 0x03, 0xd0, 0x26, 0x00, 0x19, 0x5d, 0x0b];
 
-    pub (crate) async fn new() -> Self{
+    pub (crate) async fn new() -> Result<Self, String>{
         // Initialize the Bluetooth manager
         let manager = Manager::new().await.unwrap();
 
         // Get the first Bluetooth adapter
         let adapters = manager.adapters().await.unwrap();
-        let central = adapters.into_iter().nth(0).expect("No Bluetooth adapter found");
+        let central = adapters.into_iter().nth(0).ok_or("No Bluetooth adapter found")?;
 
         // Start scanning for devices
         central.start_scan(ScanFilter::default()).await.unwrap();
@@ -88,18 +88,18 @@ impl BatteryClient{
 
         // Find the specified device by name
         let peripherals = central.peripherals().await.unwrap();
-        let peripheral = Self::find_peripheral(peripherals).await.expect("Bluetooth device not found");
+        let peripheral = Self::find_peripheral(peripherals).await.ok_or("Bluetooth device not found")?;
 
         // Connect to the device
-        peripheral.connect().await.unwrap();
-        peripheral.discover_services().await.unwrap();
+        peripheral.connect().await.map_err(|_| "Failed to connect to peripheral")?;
+        peripheral.discover_services().await.map_err(|_| "Failed to discover peripheral services")?;
 
-        let notifications = peripheral.notifications().await.expect("Cannot get notifications");
+        let notifications = peripheral.notifications().await.map_err(|_| "Failed to get peripheral notifications")?;
         
-        Self{
+        Ok(Self{
             peripheral,
             notifications
-        }
+        })
     }
 
     pub (crate) async fn fetch_state(&mut self) -> Result<BatteryState, String> {
@@ -142,7 +142,10 @@ impl BatteryClient{
     async fn read_message(&mut self) -> Result<Vec<u8>, String> {
         let mut buf = vec![];
         loop {
+            
             let notification = self.notifications.next().await.ok_or("Failed to receive expected notification")?;
+
+            println!("RX notification");
             
             assert!(notification.uuid == Self::nordic_uart_read_characteristic().uuid);
 
@@ -150,10 +153,20 @@ impl BatteryClient{
 
             let msg_result = Self::try_parse_msg(&buf);
 
+            println!("{buf:?}");
+
             match msg_result {
-                TryParseMessageResult::Ok(payload) => return Ok(payload),
-                TryParseMessageResult::Invalid => return Err("Invalid message".into()),
-                TryParseMessageResult::Incomplete => {}
+                TryParseMessageResult::Ok(payload) => {
+                    println!("Message COMPLETE");
+                    return Ok(payload)
+                },
+                TryParseMessageResult::Invalid => {
+                    println!("Message INVALID");
+                    return Err("Invalid message".into())
+                },
+                TryParseMessageResult::Incomplete => {
+                    println!("Message INCOMPLETE");
+                }
             }
         }
     }

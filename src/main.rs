@@ -4,9 +4,9 @@ use battery_client::*;
 
 #[tokio::main]
 async fn main() {
-    let mut client = BatteryClient::new().await;
+    let mut client = BatteryClient::new().await.unwrap();
 
-    let battery_state = client.fetch_state().await.unwrap();
+    let battery_state = client.fetch_state().await;
 
     println!("{battery_state:?}");
 
