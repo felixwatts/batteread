@@ -1,91 +1,14 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use btleplug::api::{Central, CharPropFlags, Characteristic, Peripheral, ScanFilter, WriteType};
-use btleplug::api::Manager as _;
-use btleplug::platform::Manager;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::task::futures;
-use tokio_modbus::prelude::*;
-use tokio::time::{sleep, Duration};
-use uuid::Uuid;
-use futures_util::{FutureExt, StreamExt};
+mod battery_client;
 
-fn NORDIC_UART_WRITE_CHARACTERISTIC() -> Characteristic {
-    Characteristic {
-        uuid: Uuid::parse_str("6e400002-b5a3-f393-e0a9-e50e24dcca9e").unwrap(),
-        service_uuid: Uuid::parse_str("6e400001-b5a3-f393-e0a9-e50e24dcca9e").unwrap(),
-        properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::WRITE,
-        descriptors: Default::default()
-    }
-}
-
-fn NORDIC_UART_READ_CHARACTERISTIC() -> Characteristic {
-    Characteristic{
-        uuid: Uuid::parse_str("6e400003-b5a3-f393-e0a9-e50e24dcca9e").unwrap(),
-        service_uuid: Uuid::parse_str("6e400001-b5a3-f393-e0a9-e50e24dcca9e").unwrap(),
-        properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::WRITE,
-        descriptors: Default::default()
-    }
-}
+use battery_client::*;
 
 #[tokio::main]
 async fn main() {
-    // Initialize the Bluetooth manager
-    let manager = Manager::new().await.unwrap();
+    let mut client = BatteryClient::new().await;
 
-    // Get the first Bluetooth adapter
-    let adapters = manager.adapters().await.unwrap();
-    let central = adapters.into_iter().nth(0).expect("No Bluetooth adapter found");
+    let battery_state = client.fetch_state().await.unwrap();
 
-    // Start scanning for devices
-    central.start_scan(ScanFilter::default()).await.unwrap();
-
-    println!("Scanning for 30s");
-
-    sleep(Duration::from_secs(30)).await; // Allow some time to discover devices
-
-    println!("Finished scanning");
-
-    // Find the specified device by name
-    let device_name = "BT_HC6172";
-    let peripherals = central.peripherals().await.unwrap();
-
-    println!("{peripherals:?}");
-
-    let peripheral = find_peripheral(peripherals, device_name).await.expect("Bluetooth device not found");
-
-    // Connect to the device
-    peripheral.connect().await.unwrap();
-    peripheral.discover_services().await.unwrap();
-    println!("Connected to Bluetooth device.");
-
-    // // Setup Modbus client
-
-    println!("SERVICES\n");
-
-    let services = peripheral.services();
-    for s in services.iter() {
-        println!("{s:?}");
-        for c in s.characteristics.iter() {
-            println!("    {c:?}");
-        }
-    }
-
-    println!("CHARACTERISTICS\n");
-
-    for c in peripheral.characteristics().into_iter() {
-        let uuid = c.uuid;
-        let props = c.properties;
-        println!("{uuid} {props:?}");
-
-        if props.contains(CharPropFlags::READ) {
-            let read_result = peripheral.read(&c).await;
-            match read_result {
-                Ok(data) => println!("{uuid} = {data:?}"),
-                Err(e) => println!("{uuid} error: {e}"),
-            }
-        }
-    }
+    println!("{battery_state:?}");
 
     // Services
 
@@ -102,113 +25,172 @@ async fn main() {
         // 6e400002-b5a3-f393-e0a9-e50e24dcca9e WRITE_WITHOUT_RESPONSE | WRITE : UART write
         // 6e400003-b5a3-f393-e0a9-e50e24dcca9e NOTIFY : UART read
 
+    // Protocol reverse engineering
 
-    println!("Try read Nordic UART");
+    // Client sends
 
-    let result = peripheral.read(&NORDIC_UART_READ_CHARACTERISTIC()).await;
+    // Server replies with 3 notifications making up 1 reply
 
-    println!("{result:?}");
+    // -> 01 03 32 02 44 00 00 00 00 00 00 00 00 00 00 02 44 00 00
+    // -> 00 00 00 02 58 02 44 02 44 00 00 00 10 00 61 00 64 4b 61 4e 20
+    // -> 4e 20 00 23 00 00 00 00 00 00 00 00 00 00 ba b1
 
-    println!("Try subscribe Nordic UART");
+    // Payload as 16 bit ints:
+    //
+    // 17408 0 0 0 0 2 17408 0 0 600 580 580 0 16 97 100 19297 20000 20000 35 0 0 0 0 0
 
-    let result = peripheral.subscribe(&NORDIC_UART_READ_CHARACTERISTIC()).await;
+    // seems to mean
+    // 
+    // 01 03 -> message type (same as request)
+    // 32    -> Payload length (50)
+    // ...   -> Payload
+    // ba b1 -> Checksum (2 bytes)
+    //
+    // Checksum
+    // 
+    // its CRC MODBUS of the whole message including the message type, length and payload, and the two bytes of the CRC are reversed.
+    //
+    // Payload
+    // Byte range | meaning
+    // 1          | ? "2"
+    // 2-3        | ? "17408" or "68 0" temp in F?
+    // 4-29       | ?
+    // 31-32      | State of charge %
+    // 41-42      | # cycles
+    // 
+    // 02 
+    // 44 00 00 00 
+    // 00 00 00 00 
+    // 00 00 00 02 
+    // 44 00 00 00 
+    // 00 00 02 58 
+    // 02 44 02 44 
+    // 00 00 00 10 
+    // 00 61 00 64 
+    // 4b 61 4e 20 
+    // 4e 20 00 23 
+    // 00 00 00 00 
+    // 00 00 00 00 
+    // 00 00
+    // 
+    // Seems to be 4 byte numbers
+    // 
+    // Guess:
+    //
+    // byte at position 30 [29] and/or 34 [33] is State of Charge Percent
+    // byte at position 41 is # cycles
 
-    println!("{result:?}");
+    // REQUEST (Voltages)
+    //
+    // 0103d0000026fcd0
+    //
+    // RESPONSE
+    //
+    // Cell voltages: 32 * 16 bit unsigned int in mV
+    // Vol range min+max: 2 * 16 bit unsigned int in mV
+    // 6 bytes: ??
+    // Battery volatage: 1 * 16 bit unsigned in in mV
+    //
+    // Example payload
+    //
+    // 0d030d040d050d000d030d050d040cffee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee490d050cff0003000800060a682771
 
-    let p2 = peripheral.clone();
+    // REQUEST (State of Charge)
+    //
+    // 0103d02600195d0b
+    //
+    // RESPONSE
+    //
+    // 16 bit unsigned ints
+    //
+    // 14: State of charge %
+    // 16: Residual capacity mAh
+    // 19: Cycles #
+    //
+    // bytes 31-32 and/or 34: State of Charge %
+    // bytes 36-37: Temp. in C/1000 or Residual capacity in mAh/10
+    // bytes 41-42: # Cycles
+    //
+    // Example payload
+    //
+    // 02 44 00 00 
+    // 00 00 00 00 
+    // 00 00 00 00 
+    // 02 44 00 00 
+    // 00 00 00 02 
+    // 58 02 44 02 
+    // 44 00 00 00 
+    // 10 00 61 00 
+    // 64 4b 61 4e 
+    // 20 4e 20 00 
+    // 23 00 00 00 
+    // 00 00 00 00 
+    // 00 00 00
+    //
+    // Another example
+    //
+    // 02 44 00 00 
+    // 00 00 00 00 
+    // 00 00 00 00
+    // 02 44 00 00 
+    // 00 00 02 58
+    // 02 44 02 44
+    // 00 00 00 10
+    // 00 61 00 64
+    // 4b 61 4e 20
+    // 4e 20 00 23
+    // 00 00 00 00
+    // 00 00 00 00
+    // 00 00
 
-    // Try to set up modbus stream
-    let nordic_uart_stream = NordicUartStream::new(p2);
-    let mut modbus = tokio_modbus::prelude::rtu::attach(nordic_uart_stream);
 
-    println!("send modbus request");
-    let result = modbus.read_holding_registers(0x0, 1).await;
-    println!("modbus result: {result:?}");
-}
 
-async fn find_peripheral<T>(peripherals: Vec<T>, device_name: &'static str) -> Option<T> where T: Peripheral {
-    for p in peripherals.into_iter() {
-        let local_name = p.properties().await.ok().flatten().map(|p| p.local_name).flatten();
-        match local_name {
-            Some(name) if name == device_name => return Some(p),
-            _ => {}
-        }
-    }
-    return None
-}
+    // REQUEST
+    //
+    // 0103d1000015bd39
+    //
+    // RESPONSE
+    //
+    // byte 35 : Current in A/100 ??? 
+    //
+    // Example Payload
+    //
+    // 0000000000000000000010101010221b1b1b000000000000000000000000000000009600000000000000
 
-#[derive(Debug)]
-struct NordicUartStream<T> where T: Peripheral {
-    peripheral: T,
-    read_buffer: Vec<u8>,
-    write_buffer: Vec<u8>,
-}
+    // 0103d115000c6d37 -> 010318 24 0c 00 00 02 a7 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+                //      -> 010318 240c000002a7000000000000000000000000000000000000
+                //      -> 010318 240c000002a7000000000000000000000000000000000000
+    // 0103d1000015bd39 -> 0000000000000000000010101010221b1b1b000000000000000000000000000000009600000000000000 seems to be same reply every time
+                //      -> 0000000000000000000010101010221b1b1b000000000000000000000000000000009600000000000000
+                        
+    // 0103d0000026fcd0 -> 0d030d040d050d000d030d060d040cffee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee490d060cff000600080007
+    //                  -> 0cfc0cfc0cfd0cf90cfc0cfd0cfd0cf8ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee490204201b00170004001b1d00ee49ee49ee49ee490cfd0cf80003000800050a62
+    // 0103d02600195d0b -> 024400000000000000000000024e000000000  258024e02440000000f006100644b604e204e20002300000000000000000000
+                        // 0244000000000000000000000244000000000002580244024400000010006100644b614e204e20002300000000000000000000
+                        // 0244000000000000000000000244000000000  2580244024400000010006100644b614e204e20002300000000000000000000
+                        // 0244000000000000000000000244000000000  24e0244024400000006005b0064467e4e204e20002400000000000000000000 9249
 
-impl<T> NordicUartStream<T> where T: Peripheral {
-    fn new(peripheral: T) -> Self {
-        Self {
-            peripheral,
-            read_buffer: Vec::new(),
-            write_buffer: Vec::new(),
-        }
-    }
-}
+                        
 
-impl<T> AsyncRead for NordicUartStream<T> where T: Peripheral + Unpin {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<tokio::io::Result<()>> {
-        let peripheral = &mut self.peripheral;
-        let fut = async move {
-            let mut notifications = peripheral.notifications().await?;
-            let notification = notifications.next().await.expect("NordicUartStream notify feed closed.");
 
-            println!("Received notifcation");
-            println!("{notification:?}");
+                        // 0244 0000 0000 0000 0000 0000
+                        // 024e 0000 0000
+                        // 0258
+                        // 024e
+                        // 0244 0000 000f 0061 0064 4b60
+                        // 4e20
+                        // 4e20
+                        // 0023 0000 0000 0000 0000 0000
 
-            assert!(notification.uuid == NORDIC_UART_READ_CHARACTERISTIC().uuid, "Unexpected characteristic in notify");
+                        // 0244 0000 0000 0000 0000 0000
+                        // 0244 0000 0000
+                        // 0258
+                        // 0244
+                        // 0244 0000 0010 0061 0064 4b61 
+                        // 4e20 4e20 
+                        // 0023 0000 0000 0000 0000 0000
 
-            Ok(notification.value)
-        };
-        
-        let data:Vec<u8> = std::task::ready!(Box::pin(fut).poll_unpin(cx)).map_err(|e: btleplug::Error| tokio::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
-        buf.put_slice(&data);
-        Poll::Ready(Ok(()))
-    }
-}
 
-impl<T> AsyncWrite for NordicUartStream<T> where T: Peripheral + Unpin {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<tokio::io::Result<usize>> {
-        self.write_buffer.extend_from_slice(buf);
-        let data = self.write_buffer.clone();
-        let peripheral = &mut self.peripheral;
-        
-        let fut = async move {
-            peripheral.write(&NORDIC_UART_WRITE_CHARACTERISTIC(), &data, WriteType::WithResponse).await.map(|_| data.len())
-        };
 
-        let n = std::task::ready!(Box::pin(fut).poll_unpin(cx)).map_err(|e| tokio::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
-        self.write_buffer.clear();
-        Poll::Ready(Ok(n))
-    }
 
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<tokio::io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<tokio::io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
 }
