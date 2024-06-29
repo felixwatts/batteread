@@ -165,7 +165,7 @@ impl BatteryClient{
 
             let msg_result = Self::try_parse_msg(&buf);
 
-            let h_buf = hex::encode(buf);
+            let h_buf = hex::encode(&buf);
             println!("{h_buf:?}");
 
             match msg_result {
