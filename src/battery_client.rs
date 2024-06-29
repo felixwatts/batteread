@@ -125,7 +125,7 @@ impl BatteryClient{
         let nums: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
 
         let cell_voltage_mv = nums[0..32].to_vec();
-        let battery_voltage_mv = nums[38];
+        let battery_voltage_mv = nums[37];
 
         let state = BatteryState{
             state_of_charge_pct,
@@ -140,6 +140,9 @@ impl BatteryClient{
     }
 
     async fn write_msg(&mut self, full_msg_bytes: &[u8]) -> Result<(), String> {
+        let h = hex::encode(full_msg_bytes);
+        println!("TX: {h}");
+
         self.peripheral.write(
             &Self::nordic_uart_write_characteristic(), 
             &full_msg_bytes, 
@@ -162,7 +165,8 @@ impl BatteryClient{
 
             let msg_result = Self::try_parse_msg(&buf);
 
-            println!("{buf:?}");
+            let h_buf = hex::encode(buf);
+            println!("{h_buf:?}");
 
             match msg_result {
                 TryParseMessageResult::Ok(payload) => {

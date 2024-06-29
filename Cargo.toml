@@ -13,7 +13,8 @@ tokio-modbus = { version = "*", default-features = false, features = ["rtu"] }
 uuid = "*"
 futures-util = "*"
 crc16 = "0.4.0"
+hex = "*"
 
 [dev-dependencies]
-hex = "*"
+
 
