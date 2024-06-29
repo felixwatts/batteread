@@ -62,11 +62,14 @@ pub (crate) struct BatteryClient{
     notifications: Pin<Box<dyn Stream<Item=ValueNotification>>>
 }
 
+    // 6e400002-b5a3-f393-e0a9-e50e24dcca9e WRITE_WITHOUT_RESPONSE | WRITE : UART write?
+    // 6e400003-b5a3-f393-e0a9-e50e24dcca9e NOTIFY : UART read?
+
 impl BatteryClient{
     const BLE_DEVICE_NAME: &'static str = "BT_HC6172";
     const NORDIC_UART_SERVICE_ID: &'static str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
     const NORDIC_UART_WRITE_CHARACTERISTIC_ID: &'static str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-    const NORDIC_UART_READ_CHARACTERISTIC_ID: &'static str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const NORDIC_UART_NOTIFY_CHARACTERISTIC_ID: &'static str = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
     const MSG_HEADER: [u8;2] = [0x01, 0x03];
     // A verbatim message to send which requests state of voltages
     const REQ_VOLTAGES: [u8; 8] = [0x01, 0x03, 0xd0, 0x00, 0x00, 0x26, 0xfc, 0xd0];
@@ -84,7 +87,9 @@ impl BatteryClient{
         // Start scanning for devices
         central.start_scan(ScanFilter::default()).await.unwrap();
 
+        println!("Begin scan..");
         sleep(Duration::from_secs(30)).await; // Allow some time to discover devices
+        println!("Scan complete");
 
         // Find the specified device by name
         let peripherals = central.peripherals().await.unwrap();
@@ -95,6 +100,10 @@ impl BatteryClient{
         peripheral.discover_services().await.map_err(|_| "Failed to discover peripheral services")?;
 
         let notifications = peripheral.notifications().await.map_err(|_| "Failed to get peripheral notifications")?;
+
+        peripheral.subscribe(&Self::nordic_uart_notify_characteristic()).await.map_err(|_| "Failed to subscribe for notify characteristic")?;
+
+        println!("Battery client is up");
         
         Ok(Self{
             peripheral,
@@ -147,7 +156,7 @@ impl BatteryClient{
 
             println!("RX notification");
             
-            assert!(notification.uuid == Self::nordic_uart_read_characteristic().uuid);
+            assert!(notification.uuid == Self::nordic_uart_notify_characteristic().uuid);
 
             buf.extend(notification.value);
 
@@ -191,11 +200,11 @@ impl BatteryClient{
         }
     }
     
-    fn nordic_uart_read_characteristic() -> Characteristic {
+    fn nordic_uart_notify_characteristic() -> Characteristic {
         Characteristic{
-            uuid: Uuid::parse_str(Self::NORDIC_UART_READ_CHARACTERISTIC_ID).unwrap(),
+            uuid: Uuid::parse_str(Self::NORDIC_UART_NOTIFY_CHARACTERISTIC_ID).unwrap(),
             service_uuid: Uuid::parse_str(Self::NORDIC_UART_SERVICE_ID).unwrap(),
-            properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::WRITE,
+            properties: CharPropFlags::NOTIFY,
             descriptors: Default::default()
         }
     }
