@@ -1,14 +1,14 @@
 mod battery_client;
 
-use battery_client::*;
+pub use battery_client::BatteryClient;
 
-#[tokio::main]
-async fn main() {
-    let mut client = BatteryClient::new().await.unwrap();
+// #[tokio::main]
+// async fn main() {
+    // let mut client = BatteryClient::new().await.unwrap();
 
-    let battery_state = client.fetch_state().await;
+    // let battery_state = client.fetch_state().await;
 
-    println!("{battery_state:?}");
+    // println!("{battery_state:?}");
 
     // Services
 
@@ -193,4 +193,4 @@ async fn main() {
 
 
 
-}
+// }

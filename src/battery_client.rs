@@ -49,15 +49,15 @@ use futures_util::{Stream, StreamExt};
 //  bytes 38-39: Cycles (count), u16
 
 #[derive(Debug)]
-pub (crate) struct BatteryState{
-    pub (crate) state_of_charge_pct: u16,
-    pub (crate) residual_capacity_mah: u16,
-    pub (crate) cycles_count: u16,
-    pub (crate) cell_voltage_mv: Vec<u16>,
-    pub (crate) battery_voltage_mv: u16
+pub struct BatteryState{
+    pub state_of_charge_pct: u16,
+    pub residual_capacity_mah: u16,
+    pub cycles_count: u16,
+    pub cell_voltage_mv: Vec<u16>,
+    pub battery_voltage_mv: u16
 }
 
-pub (crate) struct BatteryClient{
+pub struct BatteryClient{
     peripheral: btleplug::platform::Peripheral,
     notifications: Pin<Box<dyn Stream<Item=ValueNotification>>>
 }
@@ -76,7 +76,7 @@ impl BatteryClient{
     // A verbatim message to send which requests the state of change and related data
     const REQ_SOC: [u8; 8] = [0x01, 0x03, 0xd0, 0x26, 0x00, 0x19, 0x5d, 0x0b];
 
-    pub (crate) async fn new() -> Result<Self, String>{
+    pub async fn new() -> Result<Self, String>{
         // Initialize the Bluetooth manager
         let manager = Manager::new().await.unwrap();
 
@@ -111,7 +111,7 @@ impl BatteryClient{
         })
     }
 
-    pub (crate) async fn fetch_state(&mut self) -> Result<BatteryState, String> {
+    pub async fn fetch_state(&mut self) -> Result<BatteryState, String> {
         self.write_msg(&Self::REQ_SOC).await?;
         let rsp = self.read_message().await?;
 
