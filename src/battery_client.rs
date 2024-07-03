@@ -59,7 +59,7 @@ pub struct BatteryState{
 
 pub struct BatteryClient{
     peripheral: btleplug::platform::Peripheral,
-    notifications: Pin<Box<dyn Stream<Item=ValueNotification>>>
+    // notifications: Pin<Box<dyn Stream<Item=ValueNotification>>>
 }
 
     // 6e400002-b5a3-f393-e0a9-e50e24dcca9e WRITE_WITHOUT_RESPONSE | WRITE : UART write?
@@ -99,7 +99,7 @@ impl BatteryClient{
         peripheral.connect().await.map_err(|_| "Failed to connect to peripheral")?;
         peripheral.discover_services().await.map_err(|_| "Failed to discover peripheral services")?;
 
-        let notifications = peripheral.notifications().await.map_err(|_| "Failed to get peripheral notifications")?;
+        // let notifications = peripheral.notifications().await.map_err(|_| "Failed to get peripheral notifications")?;
 
         peripheral.subscribe(&Self::nordic_uart_notify_characteristic()).await.map_err(|_| "Failed to subscribe for notify characteristic")?;
 
@@ -107,7 +107,7 @@ impl BatteryClient{
         
         Ok(Self{
             peripheral,
-            notifications
+            // notifications
         })
     }
 
@@ -155,7 +155,8 @@ impl BatteryClient{
         let mut buf = vec![];
         loop {
             
-            let notification = self.notifications.next().await.ok_or("Failed to receive expected notification")?;
+            let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
+            let notification = notifications.next().await.ok_or("Failed to receive expected notification")?;
 
             println!("RX notification");
             
