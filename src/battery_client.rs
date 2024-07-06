@@ -157,7 +157,7 @@ impl BatteryClient{
 
     async fn write_msg(&mut self, full_msg_bytes: &[u8]) -> Result<(), String> {
         let h = hex::encode(full_msg_bytes);
-        // println!("TX: {h}");
+        println!("TX: {h}");
 
         self.peripheral.write(
             &Self::nordic_uart_write_characteristic(), 
@@ -174,7 +174,7 @@ impl BatteryClient{
             let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
             let notification = notifications.next().await.ok_or("Failed to receive expected notification")?;
 
-            // println!("RX notification");
+            println!("RX notification");
             
             assert!(notification.uuid == Self::nordic_uart_notify_characteristic().uuid);
 
@@ -182,20 +182,20 @@ impl BatteryClient{
 
             let msg_result = Self::try_parse_msg(&buf);
 
-            // let h_buf = hex::encode(&buf);
-            // println!("{h_buf:?}");
+            let h_buf = hex::encode(&buf);
+            println!("{h_buf:?}");
 
             match msg_result {
                 TryParseMessageResult::Ok(payload) => {
-                    // println!("Message COMPLETE");
+                    println!("Message COMPLETE");
                     return Ok(payload)
                 },
                 TryParseMessageResult::Invalid(reason) => {
-                    // println!("Message INVALID");
+                    println!("Message INVALID");
                     return Err(format!("Invalid message: {reason}"))
                 },
                 TryParseMessageResult::Incomplete => {
-                    // println!("Message INCOMPLETE");
+                    println!("Message INCOMPLETE");
                 }
             }
         }
