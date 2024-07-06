@@ -6,6 +6,7 @@ use crc16::{State, MODBUS};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 use futures_util::{Stream, StreamExt};
+use tokio::time::timeout;
 
 // This code reads some status data from a LiFePo4 battery manufactured by Li-ion and sold around the year 2022
 //
@@ -172,7 +173,8 @@ impl BatteryClient{
         loop {
             
             let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
-            let notification = notifications.next().await.ok_or("Failed to receive expected notification")?;
+            
+            let notification = timeout(Duration::from_millis(5000), notifications.next()).await.map_err(|_| "Timeout while waiting for notification")?.ok_or("Notification stream ended")?;
 
             println!("RX notification");
             
@@ -240,7 +242,7 @@ impl BatteryClient{
             return TryParseMessageResult::Invalid("Unexpected header")
         }
 
-        let expected_len = buffer[2] as usize + 3;
+        let expected_len = buffer[2] as usize + 5;
         if buffer.len() < expected_len {
             return TryParseMessageResult::Incomplete;
         }
@@ -267,8 +269,8 @@ impl BatteryClient{
 
 #[test]
 fn test_try_parse_message_happy() {
-    let message = hex::decode("010318240c000002a700000000000000000000000000000000acc1").unwrap();
-    let payload = hex::decode("240c000002a700000000000000000000000000000000").unwrap();
+    let message = hex::decode("010318240c000002a7000000000000000000000000000000000000bc90").unwrap();
+    let payload = hex::decode("240c000002a7000000000000000000000000000000000000").unwrap();
     let result = BatteryClient::try_parse_msg(&message[..]);
     assert_eq!(result, TryParseMessageResult::Ok(payload));
 }
@@ -289,7 +291,7 @@ fn test_try_parse_message_incomplete() {
 
 #[test]
 fn test_try_parse_message_bad_crc() {
-    let message = hex::decode("010318240c000002a700000000000000000000000000000000bc91").unwrap();
+    let message = hex::decode("010318240c000002a7000000000000000000000000000000000000bc91").unwrap();
     let result = BatteryClient::try_parse_msg(&message[..]);
     assert_eq!(result, TryParseMessageResult::Invalid("CRC check failed"));
 }
