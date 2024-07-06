@@ -48,6 +48,23 @@ use futures_util::{Stream, StreamExt};
 //  bytes 32-33: Residual capacity in mAh, u16
 //  bytes 38-39: Cycles (count), u16
 
+
+// Failed rq/rsp:
+//
+// TX: 0103d0000026fcd0
+// RX notification
+// "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7f"
+// Message INCOMPLETE
+// RX notification
+// "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49"
+// Message INCOMPLETE
+// RX notification
+// "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49"
+// Message INCOMPLETE
+// RX notification
+// "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee490d7f0d6b0008000300140ac7"
+// Message INCOMPLETE
+
 #[derive(Debug)]
 pub struct BatteryState{
     pub state_of_charge_pct: u16,
@@ -224,6 +241,10 @@ impl BatteryClient{
         let expected_len = buffer[2] as usize + 5;
         if buffer.len() < expected_len {
             return TryParseMessageResult::Incomplete;
+        }
+
+        if buffer.len() > expected_len {
+            return TryParseMessageResult::Invalid;
         }
 
         let crc_actual = &buffer[buffer.len()-2..];
