@@ -88,7 +88,7 @@ impl BatteryClient{
         central.start_scan(ScanFilter::default()).await.unwrap();
 
         println!("Begin scan..");
-        sleep(Duration::from_secs(30)).await; // Allow some time to discover devices
+        sleep(Duration::from_secs(15)).await; // Allow some time to discover devices
         println!("Scan complete");
 
         // Find the specified device by name
@@ -99,15 +99,12 @@ impl BatteryClient{
         peripheral.connect().await.map_err(|_| "Failed to connect to peripheral")?;
         peripheral.discover_services().await.map_err(|_| "Failed to discover peripheral services")?;
 
-        // let notifications = peripheral.notifications().await.map_err(|_| "Failed to get peripheral notifications")?;
-
         peripheral.subscribe(&Self::nordic_uart_notify_characteristic()).await.map_err(|_| "Failed to subscribe for notify characteristic")?;
 
         println!("Battery client is up");
         
         Ok(Self{
-            peripheral,
-            // notifications
+            peripheral
         })
     }
 
@@ -141,7 +138,7 @@ impl BatteryClient{
 
     async fn write_msg(&mut self, full_msg_bytes: &[u8]) -> Result<(), String> {
         let h = hex::encode(full_msg_bytes);
-        println!("TX: {h}");
+        // println!("TX: {h}");
 
         self.peripheral.write(
             &Self::nordic_uart_write_characteristic(), 
@@ -158,7 +155,7 @@ impl BatteryClient{
             let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
             let notification = notifications.next().await.ok_or("Failed to receive expected notification")?;
 
-            println!("RX notification");
+            // println!("RX notification");
             
             assert!(notification.uuid == Self::nordic_uart_notify_characteristic().uuid);
 
@@ -166,20 +163,20 @@ impl BatteryClient{
 
             let msg_result = Self::try_parse_msg(&buf);
 
-            let h_buf = hex::encode(&buf);
-            println!("{h_buf:?}");
+            // let h_buf = hex::encode(&buf);
+            // println!("{h_buf:?}");
 
             match msg_result {
                 TryParseMessageResult::Ok(payload) => {
-                    println!("Message COMPLETE");
+                    // println!("Message COMPLETE");
                     return Ok(payload)
                 },
                 TryParseMessageResult::Invalid => {
-                    println!("Message INVALID");
+                    // println!("Message INVALID");
                     return Err("Invalid message".into())
                 },
                 TryParseMessageResult::Incomplete => {
-                    println!("Message INCOMPLETE");
+                    // println!("Message INCOMPLETE");
                 }
             }
         }
