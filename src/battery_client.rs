@@ -74,7 +74,7 @@ pub struct BatteryState{
     pub residual_capacity_mah: u16,
     pub cycles_count: u16,
     pub cell_voltage_mv: Vec<u16>,
-    pub battery_voltage_mv: u16
+    pub battery_voltage_cv: u16
 }
 
 pub struct BatteryClient{
@@ -142,14 +142,14 @@ impl BatteryClient{
         let nums: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
 
         let cell_voltage_mv = nums[0..32].to_vec();
-        let battery_voltage_mv = nums[37];
+        let battery_voltage_cv = nums[37];
 
         let state = BatteryState{
             state_of_charge_pct,
             residual_capacity_mah,
             cycles_count,
             cell_voltage_mv,
-            battery_voltage_mv
+            battery_voltage_cv
         };
 
         Ok(state)
