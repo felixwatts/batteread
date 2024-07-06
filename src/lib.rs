@@ -42,7 +42,7 @@ pub use battery_client::BatteryClient;
     // seems to mean
     // 
     // 01 03 -> message type (same as request)
-    // 32    -> Payload length (50)
+    // 32    -> Payload length (50) (includes checksum bytes)
     // ...   -> Payload
     // ba b1 -> Checksum (2 bytes)
     //

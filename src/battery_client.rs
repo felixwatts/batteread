@@ -27,7 +27,7 @@ use futures_util::{Stream, StreamExt};
 //
 // The header is always [ 0x01, 0x03 ] for the requests I send.
 // All numbers are big endian, unsigned.
-// The checksum is a MODBUS checksum of the whole of the message up to the start of the checksum.
+// The checksum is a MODBUS checksum of the whole of the message up to the start of the checksum, but the two bytes are reversed.
 //
 // It is neccesary to check the checksum as messages are quite commonly corrupted.
 //
@@ -64,6 +64,8 @@ use futures_util::{Stream, StreamExt};
 // RX notification
 // "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee490d7f0d6b0008000300140ac7"
 // Message INCOMPLETE
+
+// 0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee490d7f0d6b0008000300140ac7
 
 #[derive(Debug)]
 pub struct BatteryState{
@@ -188,9 +190,9 @@ impl BatteryClient{
                     // println!("Message COMPLETE");
                     return Ok(payload)
                 },
-                TryParseMessageResult::Invalid => {
+                TryParseMessageResult::Invalid(reason) => {
                     // println!("Message INVALID");
-                    return Err("Invalid message".into())
+                    return Err(format!("Invalid message: {reason}"))
                 },
                 TryParseMessageResult::Incomplete => {
                     // println!("Message INCOMPLETE");
@@ -235,22 +237,22 @@ impl BatteryClient{
 
         let expected_header = &Self::MSG_HEADER[..];
         if &buffer[0..2] != expected_header {
-            return TryParseMessageResult::Invalid
+            return TryParseMessageResult::Invalid("Unexpected header")
         }
 
-        let expected_len = buffer[2] as usize + 5;
+        let expected_len = buffer[2] as usize + 3;
         if buffer.len() < expected_len {
             return TryParseMessageResult::Incomplete;
         }
 
         if buffer.len() > expected_len {
-            return TryParseMessageResult::Invalid;
+            return TryParseMessageResult::Invalid("Too long");
         }
 
         let crc_actual = &buffer[buffer.len()-2..];
         let crc_expected = Self::crc(&buffer[0..buffer.len()-2]);
         if crc_actual != crc_expected {
-            return TryParseMessageResult::Invalid
+            return TryParseMessageResult::Invalid("CRC check failed")
         }
 
         let payload = buffer[3..buffer.len()-2].to_vec();
@@ -265,8 +267,8 @@ impl BatteryClient{
 
 #[test]
 fn test_try_parse_message_happy() {
-    let message = hex::decode("010318240c000002a7000000000000000000000000000000000000bc90").unwrap();
-    let payload = hex::decode("240c000002a7000000000000000000000000000000000000").unwrap();
+    let message = hex::decode("010318240c000002a700000000000000000000000000000000acc1").unwrap();
+    let payload = hex::decode("240c000002a700000000000000000000000000000000").unwrap();
     let result = BatteryClient::try_parse_msg(&message[..]);
     assert_eq!(result, TryParseMessageResult::Ok(payload));
 }
@@ -280,23 +282,23 @@ fn test_try_parse_message_no_header() {
 
 #[test]
 fn test_try_parse_message_incomplete() {
-    let message = hex::decode("010318240c000002a7000000000000000000000000000000000000bc").unwrap();
+    let message = hex::decode("010318240c000002a700000000000000000000000000000000bc").unwrap();
     let result = BatteryClient::try_parse_msg(&message[..]);
     assert_eq!(result, TryParseMessageResult::Incomplete);
 }
 
 #[test]
 fn test_try_parse_message_bad_crc() {
-    let message = hex::decode("010318240c000002a7000000000000000000000000000000000000bc91").unwrap();
+    let message = hex::decode("010318240c000002a700000000000000000000000000000000bc91").unwrap();
     let result = BatteryClient::try_parse_msg(&message[..]);
-    assert_eq!(result, TryParseMessageResult::Invalid);
+    assert_eq!(result, TryParseMessageResult::Invalid("CRC check failed"));
 }
 
 #[derive(PartialEq, Eq, Debug)]
 enum TryParseMessageResult{
     Ok(Vec<u8>),
     Incomplete,
-    Invalid
+    Invalid(&'static str)
 }
 
 #[test]
