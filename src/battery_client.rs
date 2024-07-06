@@ -108,7 +108,7 @@ impl BatteryClient{
         central.start_scan(ScanFilter::default()).await.unwrap();
 
         println!("Begin scan..");
-        sleep(Duration::from_secs(15)).await; // Allow some time to discover devices
+        sleep(Duration::from_secs(30)).await; // Allow some time to discover devices
         println!("Scan complete");
 
         // Find the specified device by name
