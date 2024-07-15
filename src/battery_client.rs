@@ -169,11 +169,10 @@ impl BatteryClient{
     }
 
     async fn read_message(&mut self) -> Result<Vec<u8>, String> {
+        let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
+
         let mut buf = vec![];
         loop {
-            
-            let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
-            
             let notification = timeout(Duration::from_millis(5000), notifications.next()).await.map_err(|_| "Timeout while waiting for notification")?.ok_or("Notification stream ended")?;
 
             println!("RX notification");
