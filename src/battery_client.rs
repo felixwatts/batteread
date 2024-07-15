@@ -1,11 +1,11 @@
-use std::pin::Pin;
-use btleplug::api::{Central, CharPropFlags, Characteristic, Peripheral, ScanFilter, ValueNotification, WriteType};
+
+use btleplug::api::{Central, CharPropFlags, Characteristic, Peripheral, ScanFilter, WriteType};
 use btleplug::api::Manager as _;
 use btleplug::platform::Manager;
 use crc16::{State, MODBUS};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
-use futures_util::{Stream, StreamExt};
+use futures_util::{StreamExt};
 use tokio::time::timeout;
 
 // This code reads some status data from a LiFePo4 battery manufactured by Li-ion and sold around the year 2022
