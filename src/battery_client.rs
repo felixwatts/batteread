@@ -164,7 +164,7 @@ impl BatteryClient{
             &Self::nordic_uart_write_characteristic(), 
             &full_msg_bytes, 
             WriteType::WithResponse
-        ).await.map_err(|_| "Failed to write")?;
+        ).await.map_err(|e| format!("Failed to write: {e}"))?;
         Ok(())
     }
 
