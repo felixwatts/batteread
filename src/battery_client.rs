@@ -185,12 +185,16 @@ impl BatteryClient{
             
             assert!(notification.uuid == Self::nordic_uart_notify_characteristic().uuid);
 
+            if Self::is_packet_start(&notification.value[..]) {
+                buf.clear();
+            }
+
             buf.extend(notification.value);
 
             let msg_result = Self::try_parse_msg(&buf);
 
             let h_buf = hex::encode(&buf);
-            println!("{h_buf:?}");
+            println!("{h_buf}");
 
             match msg_result {
                 TryParseMessageResult::Ok(payload) => {
@@ -199,7 +203,7 @@ impl BatteryClient{
                 },
                 TryParseMessageResult::Invalid(reason) => {
                     println!("Message INVALID");
-                    return Err(format!("Invalid message: {reason}"))
+                    return Err(format!("Invalid message: {reason}. The buffer content is: 0x{h_buf}"))
                 },
                 TryParseMessageResult::Incomplete => {
                     println!("Message INCOMPLETE");
@@ -235,6 +239,14 @@ impl BatteryClient{
             properties: CharPropFlags::NOTIFY,
             descriptors: Default::default()
         }
+    }
+
+    fn is_packet_start(buffer: &[u8]) -> bool {
+        if buffer.len() < 2 { 
+            return false
+        }
+
+        return &buffer[0..2] == &Self::MSG_HEADER[..]
     }
 
     fn try_parse_msg(buffer: &[u8]) -> TryParseMessageResult{
