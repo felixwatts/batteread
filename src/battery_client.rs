@@ -129,6 +129,8 @@ impl BatteryClient{
     }
 
     pub async fn fetch_state(&mut self) -> Result<BatteryState, String> {
+        self.clear_notifications().await?;
+
         self.write_msg(&Self::REQ_SOC).await?;
         let rsp = self.read_message().await?;
 
@@ -186,10 +188,6 @@ impl BatteryClient{
             
             assert!(notification.uuid == Self::nordic_uart_notify_characteristic().uuid);
 
-            // if Self::is_packet_start(&notification.value[..]) {
-            //     buf.clear();
-            // }
-
             buf.extend(notification.value);
 
             let msg_result = Self::try_parse_msg(&buf);
@@ -242,14 +240,6 @@ impl BatteryClient{
         }
     }
 
-    fn is_packet_start(buffer: &[u8]) -> bool {
-        if buffer.len() < 2 { 
-            return false
-        }
-
-        return &buffer[0..2] == &Self::MSG_HEADER[..]
-    }
-
     fn try_parse_msg(buffer: &[u8]) -> TryParseMessageResult{
         if buffer.len() < 3 { 
             return TryParseMessageResult::Incomplete 
@@ -282,6 +272,21 @@ impl BatteryClient{
     fn crc(data: &[u8]) -> [u8;2] {
         let crc_bytes_reversed = State::<MODBUS>::calculate(&data).to_be_bytes();
         [crc_bytes_reversed[1], crc_bytes_reversed[0]]
+    }
+
+    async fn clear_notifications(&mut self) -> Result<(), String> {
+        let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
+
+        loop {
+            let read_result = timeout(Duration::from_millis(5000), notifications.next()).await;
+            match read_result{
+                Ok(Some(notification)) => {
+                    println!("BatteryClient.clear_notifications: DISCARD notification: 0x{}", hex::encode(notification.value));
+                },
+                Ok(None) => return Err("BatteryClient.clear_notifications: Notification stream closed".into()),
+                Err(_) => return Ok(())
+            }
+        }
     }
 }
 
