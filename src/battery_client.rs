@@ -71,7 +71,7 @@ use tokio::time::timeout;
 #[derive(Debug)]
 pub struct BatteryState{
     pub state_of_charge_pct: u16,
-    pub residual_capacity_mah: u16,
+    pub residual_capacity_cah: u16,
     pub cycles_count: u16,
     pub cell_voltage_mv: Vec<u16>,
     pub battery_voltage_cv: u16
@@ -133,7 +133,7 @@ impl BatteryClient{
         let rsp = self.read_message().await?;
 
         let state_of_charge_pct = u16::from_be_bytes([rsp[28], rsp[29]]);
-        let residual_capacity_mah = u16::from_be_bytes([rsp[32],rsp[33]]);
+        let residual_capacity_cah = u16::from_be_bytes([rsp[32],rsp[33]]);
         let cycles_count = u16::from_be_bytes([rsp[38],rsp[39]]);
 
         self.write_msg(&Self::REQ_VOLTAGES).await?;
@@ -146,7 +146,7 @@ impl BatteryClient{
 
         let state = BatteryState{
             state_of_charge_pct,
-            residual_capacity_mah,
+            residual_capacity_cah,
             cycles_count,
             cell_voltage_mv,
             battery_voltage_cv
