@@ -97,7 +97,9 @@ impl BatteryClient{
     const REQ_SOC: [u8; 8] = [0x01, 0x03, 0xd0, 0x26, 0x00, 0x19, 0x5d, 0x0b];
 
     pub async fn stop(self) -> Result<(), String> {
-        self.peripheral.disconnect().await.map_err(|e| format!("Disconnect failed: {e}"))
+        self.peripheral.disconnect().await.map_err(|e| format!("BatteryClient: Disconnect failed: {e}"))?;
+        println!("BatteryClient: disconnected.");
+        Ok(())
     }
 
     pub async fn new() -> Result<Self, String>{
@@ -106,7 +108,7 @@ impl BatteryClient{
 
         // Get the first Bluetooth adapter
         let adapters = manager.adapters().await.unwrap();
-        let central = adapters.into_iter().nth(0).ok_or("No Bluetooth adapter found")?;
+        let central = adapters.into_iter().nth(0).ok_or("BatteryClient: No Bluetooth adapter found")?;
 
         // Start scanning for devices
         central.start_scan(ScanFilter::default()).await.unwrap();
@@ -117,13 +119,13 @@ impl BatteryClient{
 
         // Find the specified device by name
         let peripherals = central.peripherals().await.unwrap();
-        let peripheral = Self::find_peripheral(peripherals).await.ok_or("Bluetooth device not found")?;
+        let peripheral = Self::find_peripheral(peripherals).await.ok_or("BatteryClient: Bluetooth device not found")?;
 
         // Connect to the device
-        peripheral.connect().await.map_err(|_| "Failed to connect to peripheral")?;
-        peripheral.discover_services().await.map_err(|_| "Failed to discover peripheral services")?;
+        peripheral.connect().await.map_err(|_| "BatteryClient: Failed to connect to peripheral")?;
+        peripheral.discover_services().await.map_err(|_| "BatteryClient: Failed to discover peripheral services")?;
 
-        peripheral.subscribe(&Self::nordic_uart_notify_characteristic()).await.map_err(|_| "Failed to subscribe for notify characteristic")?;
+        peripheral.subscribe(&Self::nordic_uart_notify_characteristic()).await.map_err(|_| "BatteryClient: Failed to subscribe for notify characteristic")?;
 
         println!("Battery client is up");
         
@@ -170,7 +172,7 @@ impl BatteryClient{
             &Self::nordic_uart_write_characteristic(), 
             &full_msg_bytes, 
             WriteType::WithResponse
-        ).await.map_err(|e| format!("Failed to write: {e}"))?;
+        ).await.map_err(|e| format!("BatteryClient: Failed to write: {e}"))?;
         Ok(())
     }
 
@@ -183,9 +185,9 @@ impl BatteryClient{
                 .await
                 .map_err(|_| {
                     let h_buf = hex::encode(&buf);
-                    format!("Timeout while waiting for notification. The buffer content is: 0x{h_buf}.")
+                    format!("BatteryClient: Timeout while waiting for notification. The buffer content is: 0x{h_buf}.")
                 })?
-                .ok_or("Notification stream ended")?;
+                .ok_or("BatteryClient: Notification stream ended")?;
 
             let h_notification = hex::encode(&notification.value);
             println!("BatteryClient.read_message: RX notification: 0x{h_notification}");
