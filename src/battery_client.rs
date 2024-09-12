@@ -173,7 +173,13 @@ impl BatteryClient{
 
         let mut buf = vec![];
         loop {
-            let notification = timeout(Duration::from_millis(5000), notifications.next()).await.map_err(|_| "Timeout while waiting for notification")?.ok_or("Notification stream ended")?;
+            let notification = timeout(Duration::from_millis(5000), notifications.next())
+                .await
+                .map_err(|_| {
+                    let h_buf = hex::encode(&buf);
+                    format!("Timeout while waiting for notification. The buffer content is: 0x{h_buf}.")
+                })?
+                .ok_or("Notification stream ended")?;
 
             println!("RX notification");
             
