@@ -181,32 +181,33 @@ impl BatteryClient{
                 })?
                 .ok_or("Notification stream ended")?;
 
-            println!("RX notification");
+            let h_notification = hex::encode(&notification.value);
+            println!("BatteryClient.read_message: RX notification: 0x{h_notification}");
             
             assert!(notification.uuid == Self::nordic_uart_notify_characteristic().uuid);
 
-            if Self::is_packet_start(&notification.value[..]) {
-                buf.clear();
-            }
+            // if Self::is_packet_start(&notification.value[..]) {
+            //     buf.clear();
+            // }
 
             buf.extend(notification.value);
 
             let msg_result = Self::try_parse_msg(&buf);
 
             let h_buf = hex::encode(&buf);
-            println!("{h_buf}");
+            println!("BatteryClient.read_message: Buffer: {h_buf}");
 
             match msg_result {
                 TryParseMessageResult::Ok(payload) => {
-                    println!("Message COMPLETE");
+                    println!("BatteryClient.read_message: Message COMPLETE");
                     return Ok(payload)
                 },
                 TryParseMessageResult::Invalid(reason) => {
-                    println!("Message INVALID");
+                    println!("BatteryClient.read_message: Message INVALID");
                     return Err(format!("Invalid message: {reason}. The buffer content is: 0x{h_buf}"))
                 },
                 TryParseMessageResult::Incomplete => {
-                    println!("Message INCOMPLETE");
+                    println!("BatteryClient.read_message: Message INCOMPLETE");
                 }
             }
         }
