@@ -96,6 +96,10 @@ impl BatteryClient{
     // A verbatim message to send which requests the state of change and related data
     const REQ_SOC: [u8; 8] = [0x01, 0x03, 0xd0, 0x26, 0x00, 0x19, 0x5d, 0x0b];
 
+    pub async fn stop(self) -> Result<(), String> {
+        self.peripheral.disconnect().await.map_err(|e| format!("Disconnect failed: {e}"))
+    }
+
     pub async fn new() -> Result<Self, String>{
         // Initialize the Bluetooth manager
         let manager = Manager::new().await.unwrap();
