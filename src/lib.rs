@@ -1,6 +1,7 @@
 mod battery_client;
 
 pub use battery_client::BatteryClient;
+pub use battery_client::BatteryState;
 
 // #[tokio::main]
 // async fn main() {
