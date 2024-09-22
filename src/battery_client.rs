@@ -180,6 +180,8 @@ impl BatteryClient{
         let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
 
         let mut buf = vec![];
+        let mut prev_notificaiton = vec![];
+
         loop {
             let notification = timeout(Duration::from_millis(5000), notifications.next())
                 .await
@@ -193,6 +195,14 @@ impl BatteryClient{
             println!("BatteryClient.read_message: RX notification: 0x{h_notification}");
             
             assert!(notification.uuid == Self::nordic_uart_notify_characteristic().uuid);
+
+            if prev_notificaiton == notification.value{
+                // HACK: Ignore duplicate notifications. We seem to receive multiple copies 
+                // of some notifications. Maybe it's an artefact of the transport?
+                continue;
+            }
+
+            prev_notificaiton = notification.value.clone();
 
             buf.extend(notification.value);
 
