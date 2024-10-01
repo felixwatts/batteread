@@ -153,7 +153,7 @@ impl BatteryClient{
     }
 
     async fn write_msg(&mut self, full_msg_bytes: &[u8]) -> anyhow::Result<()> {
-        Self::try_connect(&mut self.device).await?;
+        Self::try_connect(&self.device).await?;
 
         let h = hex::encode(full_msg_bytes);
         println!("BATTERY: TX: {h}");
@@ -171,7 +171,7 @@ impl BatteryClient{
     }
 
     async fn read_message(&mut self) -> anyhow::Result<Vec<u8>> {
-        Self::try_connect(&mut self.device).await?;
+        Self::try_connect(&self.device).await?;
 
         let mut notify_io = self.notify.notify_io().await?;
         let mut buf = vec![0u8; notify_io.mtu()];
