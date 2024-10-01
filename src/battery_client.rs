@@ -111,16 +111,13 @@ impl BatteryClient{
         pin_mut!(discover);
         
         while let Ok(Some(evt)) = timeout(Duration::from_millis(30000), discover.next()).await {
-            match evt {
-                AdapterEvent::DeviceAdded(addr) => {
-                    let device = adapter.device(addr)?;
-                    if device.name().await?.unwrap_or_default() == Self::BLE_DEVICE_NAME {
-                        let write = Self::find_characteristic(&device, Self::nordic_uart_write_characteristic_id()).await?.ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
-                        let notify = Self::find_characteristic(&device, Self::nordic_uart_notify_characteristic_id()).await?.ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
-                        return Ok(Self{ device, write, notify })
-                    }
+            if let AdapterEvent::DeviceAdded(addr) = evt {
+                let device = adapter.device(addr)?;
+                if device.name().await?.unwrap_or_default() == Self::BLE_DEVICE_NAME {
+                    let write = Self::find_characteristic(&device, Self::nordic_uart_write_characteristic_id()).await?.ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
+                    let notify = Self::find_characteristic(&device, Self::nordic_uart_notify_characteristic_id()).await?.ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
+                    return Ok(Self{ device, write, notify })
                 }
-                _ => (),
             }
         }
 
@@ -160,8 +157,13 @@ impl BatteryClient{
         println!("TX: {h}");
 
         let mut write_io = self.write.write_io().await?;
-        write_io.write(&full_msg_bytes).await?;
+        let written = write_io.write(full_msg_bytes).await?;
+
         drop(write_io);
+
+        if written != full_msg_bytes.len() {
+            return Err(anyhow!("Failed to write all bytes"))
+        }
 
         Ok(())
     }
@@ -249,7 +251,7 @@ impl BatteryClient{
     }
 
     fn crc(data: &[u8]) -> [u8;2] {
-        let crc_bytes_reversed = State::<MODBUS>::calculate(&data).to_be_bytes();
+        let crc_bytes_reversed = State::<MODBUS>::calculate(data).to_be_bytes();
         [crc_bytes_reversed[1], crc_bytes_reversed[0]]
     }
 
