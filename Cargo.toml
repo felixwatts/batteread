@@ -8,8 +8,6 @@ edition = "2021"
 [dependencies]
 # bluetooth-serial-port-async = { version = "*", git = "https://github.com/felixwatts/bluetooth-serial-port-async.git", features = ["tokio"], default-features = false }
 tokio = { version = "1", features = ["full"] }
-tokio-modbus = { version = "*", default-features = false, features = ["rtu"] }
-uuid = "*"
 futures-util = "*"
 crc16 = "0.4.0"
 hex = "*"

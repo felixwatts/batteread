@@ -1,10 +1,11 @@
+use bluer::Uuid;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use anyhow::anyhow;
 use bluer::{gatt::remote::Characteristic, AdapterEvent, Device};
 use crc16::{State, MODBUS};
 use tokio::time::{sleep, Duration};
-use uuid::Uuid;
+// use uuid::Uuid;
 use futures_util::{pin_mut, StreamExt};
 use tokio::time::timeout;
 
