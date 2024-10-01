@@ -1,11 +1,11 @@
-
-use btleplug::api::{Central, CharPropFlags, Characteristic, Peripheral, ScanFilter, WriteType};
-use btleplug::api::Manager as _;
-use btleplug::platform::Manager;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use anyhow::anyhow;
+use bluer::{gatt::remote::Characteristic, AdapterEvent, Device};
 use crc16::{State, MODBUS};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
-use futures_util::{StreamExt};
+use futures_util::{pin_mut, StreamExt};
 use tokio::time::timeout;
 
 // This code reads some status data from a LiFePo4 battery manufactured by Li-ion and sold around the year 2022
@@ -30,9 +30,9 @@ use tokio::time::timeout;
 // All numbers are big endian, unsigned.
 // The checksum is a MODBUS checksum of the whole of the message up to the start of the checksum, but the two bytes are reversed.
 //
-// It is neccesary to check the checksum as messages are quite commonly corrupted.
+// It is necessary to check the checksum as messages are quite commonly corrupted.
 //
-// There are two types of request-reponse that I use:
+// There are two types of request-response that I use:
 //
 // VOLTAGES
 //
@@ -78,8 +78,9 @@ pub struct BatteryState{
 }
 
 pub struct BatteryClient{
-    peripheral: btleplug::platform::Peripheral,
-    // notifications: Pin<Box<dyn Stream<Item=ValueNotification>>>
+    device: Device,
+    write: Characteristic,
+    notify: Characteristic
 }
 
     // 6e400002-b5a3-f393-e0a9-e50e24dcca9e WRITE_WITHOUT_RESPONSE | WRITE : UART write?
@@ -96,47 +97,36 @@ impl BatteryClient{
     // A verbatim message to send which requests the state of change and related data
     const REQ_SOC: [u8; 8] = [0x01, 0x03, 0xd0, 0x26, 0x00, 0x19, 0x5d, 0x0b];
 
-    pub async fn stop(self) -> Result<(), String> {
-        self.peripheral.disconnect().await.map_err(|e| format!("BatteryClient: Disconnect failed: {e}"))?;
-        println!("BatteryClient: disconnected.");
+    pub async fn stop(self) -> anyhow::Result<()> {
+        self.device.disconnect().await?;
         Ok(())
     }
 
-    pub async fn new() -> Result<Self, String>{
-        // Initialize the Bluetooth manager
-        let manager = Manager::new().await.unwrap();
-
-        // Get the first Bluetooth adapter
-        let adapters = manager.adapters().await.unwrap();
-        let central = adapters.into_iter().nth(0).ok_or("BatteryClient: No Bluetooth adapter found")?;
-
-        // Start scanning for devices
-        central.start_scan(ScanFilter::default()).await.unwrap();
-
-        println!("Begin scan..");
-        sleep(Duration::from_secs(30)).await; // Allow some time to discover devices
-        println!("Scan complete");
-
-        // Find the specified device by name
-        let peripherals = central.peripherals().await.unwrap();
-        let peripheral = Self::find_peripheral(peripherals).await.ok_or("BatteryClient: Bluetooth device not found")?;
-
-        // Connect to the device
-        peripheral.connect().await.map_err(|_| "BatteryClient: Failed to connect to peripheral")?;
-        peripheral.discover_services().await.map_err(|_| "BatteryClient: Failed to discover peripheral services")?;
-
-        peripheral.subscribe(&Self::nordic_uart_notify_characteristic()).await.map_err(|_| "BatteryClient: Failed to subscribe for notify characteristic")?;
-
-        println!("Battery client is up");
+    pub async fn new() -> anyhow::Result<Self>{
+        let session = bluer::Session::new().await?;
+        let adapter = session.default_adapter().await?;
+        adapter.set_powered(true).await?;
+        let discover = adapter.discover_devices().await?;
+        pin_mut!(discover);
         
-        Ok(Self{
-            peripheral
-        })
+        while let Ok(Some(evt)) = timeout(Duration::from_millis(30000), discover.next()).await {
+            match evt {
+                AdapterEvent::DeviceAdded(addr) => {
+                    let device = adapter.device(addr)?;
+                    if device.name().await?.unwrap_or_default() == Self::BLE_DEVICE_NAME {
+                        let write = Self::find_characteristic(&device, Self::nordic_uart_write_characteristic_id()).await?.ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
+                        let notify = Self::find_characteristic(&device, Self::nordic_uart_notify_characteristic_id()).await?.ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
+                        return Ok(Self{ device, write, notify })
+                    }
+                }
+                _ => (),
+            }
+        }
+
+        Err(anyhow!("Failed to initialize bluetooth connection"))
     }
 
-    pub async fn fetch_state(&mut self) -> Result<BatteryState, String> {
-        self.clear_notifications().await?;
-
+    pub async fn fetch_state(&mut self) -> anyhow::Result<BatteryState> {
         self.write_msg(&Self::REQ_SOC).await?;
         let rsp = self.read_message().await?;
 
@@ -147,10 +137,10 @@ impl BatteryClient{
         self.write_msg(&Self::REQ_VOLTAGES).await?;
         let rsp = self.read_message().await?;
 
-        let nums: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
+        let numbers: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
 
-        let cell_voltage_mv = nums[0..32].to_vec();
-        let battery_voltage_cv = nums[37];
+        let cell_voltage_mv = numbers[0..32].to_vec();
+        let battery_voltage_cv = numbers[37];
 
         let state = BatteryState{
             state_of_charge_pct,
@@ -164,96 +154,68 @@ impl BatteryClient{
 
     }
 
-    async fn write_msg(&mut self, full_msg_bytes: &[u8]) -> Result<(), String> {
+    async fn write_msg(&mut self, full_msg_bytes: &[u8]) -> anyhow::Result<()> {
         let h = hex::encode(full_msg_bytes);
         println!("TX: {h}");
 
-        self.peripheral.write(
-            &Self::nordic_uart_write_characteristic(), 
-            &full_msg_bytes, 
-            WriteType::WithResponse
-        ).await.map_err(|e| format!("BatteryClient: Failed to write: {e}"))?;
+        let mut write_io = self.write.write_io().await?;
+        write_io.write(&full_msg_bytes).await?;
+        drop(write_io);
+
         Ok(())
     }
 
-    async fn read_message(&mut self) -> Result<Vec<u8>, String> {
-        let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
-
-        let mut buf = vec![];
-        let mut prev_notificaiton = vec![];
-
+    async fn read_message(&mut self) -> anyhow::Result<Vec<u8>> {
+        let mut notify_io = self.notify.notify_io().await?;
+        let mut buf = vec![0u8; notify_io.mtu()];
+        let mut msg = Vec::<u8>::new();
         loop {
-            let notification = timeout(Duration::from_millis(5000), notifications.next())
-                .await
-                .map_err(|_| {
-                    let h_buf = hex::encode(&buf);
-                    format!("BatteryClient: Timeout while waiting for notification. The buffer content is: 0x{h_buf}.")
-                })?
-                .ok_or("BatteryClient: Notification stream ended")?;
+            match notify_io.read(&mut buf).await {
+                Ok(0) => {
+                    // End of stream
 
-            let h_notification = hex::encode(&notification.value);
-            println!("BatteryClient.read_message: RX notification: 0x{h_notification}");
-            
-            assert!(notification.uuid == Self::nordic_uart_notify_characteristic().uuid);
+                    println!("BatteryClient.read_message: End of notification stream");
 
-            if prev_notificaiton == notification.value{
-                // HACK: Ignore duplicate notifications. We seem to receive multiple copies 
-                // of some notifications. Maybe it's an artefact of the transport?
-                continue;
-            }
+                    let parse_msg_result = Self::try_parse_msg(&msg[..]);
+                    match parse_msg_result{
+                        TryParseMessageResult::Ok(payload) => {
+                            return Ok(payload)
+                        },
+                        TryParseMessageResult::Incomplete => {
+                            let h_msg = hex::encode(&msg[..]);
+                            return Err(anyhow!("Message incomplete: {h_msg}"))
+                        },
+                        TryParseMessageResult::Invalid(e) => {
+                            let h_msg = hex::encode(&msg[..]);
+                            return Err(anyhow!("Message invalid: {e}: {h_msg}"))
+                        },
+                    }
+                }
+                Ok(read) => {
+                    let h_notification = hex::encode(&buf[0..read]);
+                    println!("BatteryClient.read_message: RX notification: 0x{h_notification}");
 
-            prev_notificaiton = notification.value.clone();
+                    msg.extend_from_slice(&buf[0..read]);
+                }
+                Err(err) => {
+                    println!("BatteryClient.read_message: Notification error: {err}");
 
-            buf.extend(notification.value);
-
-            let msg_result = Self::try_parse_msg(&buf);
-
-            let h_buf = hex::encode(&buf);
-            println!("BatteryClient.read_message: Buffer: {h_buf}");
-
-            match msg_result {
-                TryParseMessageResult::Ok(payload) => {
-                    println!("BatteryClient.read_message: Message COMPLETE");
-                    return Ok(payload)
-                },
-                TryParseMessageResult::Invalid(reason) => {
-                    println!("BatteryClient.read_message: Message INVALID");
-                    return Err(format!("Invalid message: {reason}. The buffer content is: 0x{h_buf}"))
-                },
-                TryParseMessageResult::Incomplete => {
-                    println!("BatteryClient.read_message: Message INCOMPLETE");
+                    return Err(err.into());
                 }
             }
         }
     }
 
-    async fn find_peripheral(peripherals: Vec<btleplug::platform::Peripheral>) -> Option<btleplug::platform::Peripheral> {
-        for p in peripherals.into_iter() {
-            let local_name = p.properties().await.ok().flatten().map(|p| p.local_name).flatten();
-            match local_name {
-                Some(name) if name == Self::BLE_DEVICE_NAME => return Some(p),
-                _ => {}
-            }
-        }
-        return None
+    fn nordic_uart_service_id() -> Uuid {
+        Uuid::parse_str(Self::NORDIC_UART_SERVICE_ID).unwrap()
     }
 
-    fn nordic_uart_write_characteristic() -> Characteristic {
-        Characteristic {
-            uuid: Uuid::parse_str(Self::NORDIC_UART_WRITE_CHARACTERISTIC_ID).unwrap(),
-            service_uuid: Uuid::parse_str(Self::NORDIC_UART_SERVICE_ID).unwrap(),
-            properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::WRITE,
-            descriptors: Default::default()
-        }
+    fn nordic_uart_write_characteristic_id() -> Uuid {
+        Uuid::parse_str(Self::NORDIC_UART_WRITE_CHARACTERISTIC_ID).unwrap()
     }
-    
-    fn nordic_uart_notify_characteristic() -> Characteristic {
-        Characteristic{
-            uuid: Uuid::parse_str(Self::NORDIC_UART_NOTIFY_CHARACTERISTIC_ID).unwrap(),
-            service_uuid: Uuid::parse_str(Self::NORDIC_UART_SERVICE_ID).unwrap(),
-            properties: CharPropFlags::NOTIFY,
-            descriptors: Default::default()
-        }
+
+    fn nordic_uart_notify_characteristic_id() -> Uuid {
+        Uuid::parse_str(Self::NORDIC_UART_NOTIFY_CHARACTERISTIC_ID).unwrap()
     }
 
     fn try_parse_msg(buffer: &[u8]) -> TryParseMessageResult{
@@ -290,20 +252,60 @@ impl BatteryClient{
         [crc_bytes_reversed[1], crc_bytes_reversed[0]]
     }
 
-    async fn clear_notifications(&mut self) -> Result<(), String> {
-        let mut notifications = self.peripheral.notifications().await.map_err(|_| "Failed to get notifications stream")?;
-
-        loop {
-            let read_result = timeout(Duration::from_millis(5000), notifications.next()).await;
-            match read_result{
-                Ok(Some(notification)) => {
-                    println!("BatteryClient.clear_notifications: DISCARD notification: 0x{}", hex::encode(notification.value));
-                },
-                Ok(None) => return Err("BatteryClient.clear_notifications: Notification stream closed".into()),
-                Err(_) => return Ok(())
+    async fn find_characteristic(device: &Device, char_id: Uuid) -> anyhow::Result<Option<Characteristic>> {
+        let addr = device.address();
+        let uuids = device.uuids().await?.unwrap_or_default();
+        println!("Discovered device {} with service UUIDs {:?}", addr, &uuids);
+        let md = device.manufacturer_data().await?;
+        println!("    Manufacturer data: {:x?}", &md);
+    
+        if uuids.contains(&Self::nordic_uart_service_id()) {
+            println!("    Device provides our service!");
+    
+            sleep(Duration::from_secs(2)).await;
+            if !device.is_connected().await? {
+                println!("    Connecting...");
+                let mut retries = 2;
+                loop {
+                    match device.connect().await {
+                        Ok(()) => break,
+                        Err(err) if retries > 0 => {
+                            println!("    Connect error: {}", &err);
+                            retries -= 1;
+                        }
+                        Err(err) => return Err(err.into()),
+                    }
+                }
+                println!("    Connected");
+            } else {
+                println!("    Already connected");
             }
+    
+            println!("    Enumerating services...");
+            for service in device.services().await? {
+                let uuid = service.uuid().await?;
+                println!("    Service UUID: {}", &uuid);
+                println!("    Service data: {:?}", service.all_properties().await?);
+                if uuid == Self::nordic_uart_service_id() {
+                    println!("    Found our service!");
+                    for char in service.characteristics().await? {
+                        let uuid = char.uuid().await?;
+                        println!("    Characteristic UUID: {}", &uuid);
+                        println!("    Characteristic data: {:?}", char.all_properties().await?);
+                        if uuid == char_id {
+                            println!("    Found our characteristic!");
+                            return Ok(Some(char));
+                        }
+                    }
+                }
+            }
+    
+            println!("    Not found!");
         }
+    
+        Ok(None)
     }
+
 }
 
 #[test]
