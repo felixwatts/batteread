@@ -210,8 +210,6 @@ impl BatteryClient{
                             return Ok(payload)
                         },
                         TryParseMessageResult::Incomplete => {
-                            let h_msg = hex::encode(&msg[..]);
-                            return Err(anyhow!("Message incomplete: {h_msg}"))
                         },
                         TryParseMessageResult::Invalid(e) => {
                             let h_msg = hex::encode(&msg[..]);
