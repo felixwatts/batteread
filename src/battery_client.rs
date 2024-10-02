@@ -7,7 +7,6 @@ use anyhow::anyhow;
 use bluer::{gatt::remote::Characteristic, AdapterEvent, Device};
 use crc16::{State, MODBUS};
 use tokio::time::{sleep, Duration};
-// use uuid::Uuid;
 use futures_util::{pin_mut, StreamExt};
 use tokio::time::timeout;
 
@@ -137,18 +136,22 @@ impl BatteryClient{
     pub async fn fetch_state(&mut self) -> anyhow::Result<BatteryState> {
         self.write_msg(&Self::REQ_SOC).await?;
         let rsp = self.read_message().await?;
+        let nums: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
 
-        let state_of_charge_pct = u16::from_be_bytes([rsp[28], rsp[29]]);
-        let residual_capacity_cah = u16::from_be_bytes([rsp[32],rsp[33]]);
-        let cycles_count = u16::from_be_bytes([rsp[38],rsp[39]]);
+	println!("BATTERY SOC response: {nums:?}");
+
+        let state_of_charge_pct = nums[14];
+        let residual_capacity_cah = nums[16];
+        let cycles_count = nums[19];
 
         self.write_msg(&Self::REQ_VOLTAGES).await?;
         let rsp = self.read_message().await?;
 
-        let numbers: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
+        let nums: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
+	println!("BATTERY Voltages response: {nums:?}");
 
-        let cell_voltage_mv = numbers[0..32].to_vec();
-        let battery_voltage_cv = numbers[37];
+        let cell_voltage_mv = nums[0..32].to_vec();
+        let battery_voltage_cv = nums[37];
 
         let state = BatteryState{
             state_of_charge_pct,
@@ -157,6 +160,8 @@ impl BatteryClient{
             cell_voltage_mv,
             battery_voltage_cv
         };
+
+
 
         Ok(state)
 
@@ -183,8 +188,12 @@ impl BatteryClient{
         let mut buf = vec![0u8; self.notify.mtu()];
         let mut msg = Vec::<u8>::new();
         loop {
-            match self.notify.read(&mut buf).await {
-                Ok(0) => {
+            let read_result = tokio::time::timeout(Duration::from_secs(5), self.notify.read(&mut buf)).await;
+
+            match read_result {
+                Err(_) => { return Err(anyhow!("Timeout while waiting for message")); }
+
+                Ok(Ok(0)) => {
                     // End of stream
 
                     println!("BATTERY: End of notification stream");
@@ -204,7 +213,7 @@ impl BatteryClient{
                         },
                     }
                 }
-                Ok(read) => {
+                Ok(Ok(read)) => {
                     let h_notification = hex::encode(&buf[0..read]);
                     println!("BATTERY: RX notification: 0x{h_notification}");
 
@@ -223,7 +232,7 @@ impl BatteryClient{
                         },
                     }
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
                     println!("BATTERY: Notification error: {err}");
 
                     return Err(err.into());
