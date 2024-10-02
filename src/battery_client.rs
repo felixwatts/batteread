@@ -209,6 +209,19 @@ impl BatteryClient{
                     println!("BATTERY: RX notification: 0x{h_notification}");
 
                     msg.extend_from_slice(&buf[0..read]);
+
+                    let parse_msg_result = Self::try_parse_msg(&msg[..]);
+                    match parse_msg_result{
+                        TryParseMessageResult::Ok(payload) => {
+                            return Ok(payload)
+                        },
+                        TryParseMessageResult::Incomplete => {
+                        },
+                        TryParseMessageResult::Invalid(e) => {
+                            let h_msg = hex::encode(&msg[..]);
+                            return Err(anyhow!("Message invalid: {e}: {h_msg}"))
+                        },
+                    }
                 }
                 Err(err) => {
                     println!("BATTERY: Notification error: {err}");
