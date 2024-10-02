@@ -1,3 +1,5 @@
+use bluer::gatt::CharacteristicReader;
+use bluer::gatt::CharacteristicWriter;
 use bluer::Uuid;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
@@ -80,8 +82,8 @@ pub struct BatteryState{
 
 pub struct BatteryClient{
     device: Device,
-    write: Characteristic,
-    notify: Characteristic
+    write: CharacteristicWriter,
+    notify: CharacteristicReader
 }
 
     // 6e400002-b5a3-f393-e0a9-e50e24dcca9e WRITE_WITHOUT_RESPONSE | WRITE : UART write?
@@ -114,8 +116,16 @@ impl BatteryClient{
             if let AdapterEvent::DeviceAdded(addr) = evt {
                 let device = adapter.device(addr)?;
                 if device.name().await?.unwrap_or_default() == Self::BLE_DEVICE_NAME {
-                    let write = Self::find_characteristic(&device, Self::nordic_uart_write_characteristic_id()).await?.ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
-                    let notify = Self::find_characteristic(&device, Self::nordic_uart_notify_characteristic_id()).await?.ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
+                    let write = Self::find_characteristic(&device, Self::nordic_uart_write_characteristic_id())
+                        .await?
+                        .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?
+                        .write_io()
+                        .await?;
+                    let notify = Self::find_characteristic(&device, Self::nordic_uart_notify_characteristic_id())
+                        .await?
+                        .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?
+                        .notify_io()
+                        .await?;
                     return Ok(Self{ device, write, notify })
                 }
             }
@@ -158,10 +168,7 @@ impl BatteryClient{
         let h = hex::encode(full_msg_bytes);
         println!("BATTERY: TX: {h}");
 
-        let mut write_io = self.write.write_io().await?;
-        let written = write_io.write(full_msg_bytes).await?;
-
-        drop(write_io);
+        let written = self.write.write(full_msg_bytes).await?;
 
         if written != full_msg_bytes.len() {
             return Err(anyhow!("Failed to write all bytes"))
@@ -173,11 +180,10 @@ impl BatteryClient{
     async fn read_message(&mut self) -> anyhow::Result<Vec<u8>> {
         Self::try_connect(&self.device).await?;
 
-        let mut notify_io = self.notify.notify_io().await?;
-        let mut buf = vec![0u8; notify_io.mtu()];
+        let mut buf = vec![0u8; self.notify.mtu()];
         let mut msg = Vec::<u8>::new();
         loop {
-            match notify_io.read(&mut buf).await {
+            match self.notify.read(&mut buf).await {
                 Ok(0) => {
                     // End of stream
 
