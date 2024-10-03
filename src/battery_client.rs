@@ -81,8 +81,8 @@ pub struct BatteryState{
 
 pub struct BatteryClient{
     device: Device,
-    write: CharacteristicWriter,
-    notify: CharacteristicReader
+    write: Characteristic,
+    notify: Characteristic
 }
 
     // 6e400002-b5a3-f393-e0a9-e50e24dcca9e WRITE_WITHOUT_RESPONSE | WRITE : UART write?
@@ -117,14 +117,10 @@ impl BatteryClient{
                 if device.name().await?.unwrap_or_default() == Self::BLE_DEVICE_NAME {
                     let write = Self::find_characteristic(&device, Self::nordic_uart_write_characteristic_id())
                         .await?
-                        .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?
-                        .write_io()
-                        .await?;
+                        .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
                     let notify = Self::find_characteristic(&device, Self::nordic_uart_notify_characteristic_id())
                         .await?
-                        .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?
-                        .notify_io()
-                        .await?;
+                        .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
                     return Ok(Self{ device, write, notify })
                 }
             }
@@ -134,8 +130,11 @@ impl BatteryClient{
     }
 
     pub async fn fetch_state(&mut self) -> anyhow::Result<BatteryState> {
+	Self::try_connect(&self.device).await?;
+
+	let mut reader = self.notify.notify_io().await?;
         self.write_msg(&Self::REQ_SOC).await?;
-        let rsp = self.read_message().await?;
+        let rsp = Self::read_message(&mut reader).await?;
         let nums: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
 
 	println!("BATTERY SOC response: {nums:?}");
@@ -145,7 +144,7 @@ impl BatteryClient{
         let cycles_count = nums[19];
 
         self.write_msg(&Self::REQ_VOLTAGES).await?;
-        let rsp = self.read_message().await?;
+        let rsp = Self::read_message(&mut reader).await?;
 
         let nums: Vec<u16> = rsp.chunks(2).map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])).collect();
 	println!("BATTERY Voltages response: {nums:?}");
@@ -161,19 +160,15 @@ impl BatteryClient{
             battery_voltage_cv
         };
 
-
-
         Ok(state)
-
     }
 
     async fn write_msg(&mut self, full_msg_bytes: &[u8]) -> anyhow::Result<()> {
-        Self::try_connect(&self.device).await?;
-
         let h = hex::encode(full_msg_bytes);
         println!("BATTERY: TX: {h}");
 
-        let written = self.write.write(full_msg_bytes).await?;
+	let mut writer = self.write.write_io().await?;
+        let written = writer.write(full_msg_bytes).await?;
 
         if written != full_msg_bytes.len() {
             return Err(anyhow!("Failed to write all bytes"))
@@ -182,13 +177,11 @@ impl BatteryClient{
         Ok(())
     }
 
-    async fn read_message(&mut self) -> anyhow::Result<Vec<u8>> {
-        Self::try_connect(&self.device).await?;
-
-        let mut buf = vec![0u8; self.notify.mtu()];
+    async fn read_message(reader: &mut CharacteristicReader) -> anyhow::Result<Vec<u8>> {
+        let mut buf = vec![0u8; reader.mtu()];
         let mut msg = Vec::<u8>::new();
         loop {
-            let read_result = tokio::time::timeout(Duration::from_secs(15), self.notify.read(&mut buf)).await;
+            let read_result = tokio::time::timeout(Duration::from_secs(15), reader.read(&mut buf)).await;
 
             match read_result {
                 Err(_) => { 
