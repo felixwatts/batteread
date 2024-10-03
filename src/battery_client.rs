@@ -188,49 +188,38 @@ impl BatteryClient{
         let mut buf = vec![0u8; self.notify.mtu()];
         let mut msg = Vec::<u8>::new();
         loop {
-            let read_result = tokio::time::timeout(Duration::from_secs(5), self.notify.read(&mut buf)).await;
+            let read_result = tokio::time::timeout(Duration::from_secs(15), self.notify.read(&mut buf)).await;
 
             match read_result {
-                Err(_) => { return Err(anyhow!("Timeout while waiting for message")); }
-
+                Err(_) => { 
+			// timeout
+			let parse_msg_result = Self::try_parse_msg(&msg[..]);
+                    	match parse_msg_result{
+                        	TryParseMessageResult::Ok(payload) => {
+                            		return Ok(payload)
+                        	},
+                        	TryParseMessageResult::Incomplete => {
+                            		let h_msg = hex::encode(&msg[..]);
+                            		return Err(anyhow!("Message incomplete: {h_msg}"))
+                        	},
+                        	TryParseMessageResult::Invalid(e) => {
+                            		let h_msg = hex::encode(&msg[..]);
+                            		return Err(anyhow!("Message invalid: {e}: {h_msg}"))
+                        	},
+                    	}
+		}
                 Ok(Ok(0)) => {
                     // End of stream
 
                     println!("BATTERY: End of notification stream");
 
-                    let parse_msg_result = Self::try_parse_msg(&msg[..]);
-                    match parse_msg_result{
-                        TryParseMessageResult::Ok(payload) => {
-                            return Ok(payload)
-                        },
-                        TryParseMessageResult::Incomplete => {
-                            let h_msg = hex::encode(&msg[..]);
-                            return Err(anyhow!("Message incomplete: {h_msg}"))
-                        },
-                        TryParseMessageResult::Invalid(e) => {
-                            let h_msg = hex::encode(&msg[..]);
-                            return Err(anyhow!("Message invalid: {e}: {h_msg}"))
-                        },
-                    }
+                    return Err(anyhow!("end of notification stream"));
                 }
                 Ok(Ok(read)) => {
                     let h_notification = hex::encode(&buf[0..read]);
                     println!("BATTERY: RX notification: 0x{h_notification}");
 
                     msg.extend_from_slice(&buf[0..read]);
-
-                    let parse_msg_result = Self::try_parse_msg(&msg[..]);
-                    match parse_msg_result{
-                        TryParseMessageResult::Ok(payload) => {
-                            return Ok(payload)
-                        },
-                        TryParseMessageResult::Incomplete => {
-                        },
-                        TryParseMessageResult::Invalid(e) => {
-                            let h_msg = hex::encode(&msg[..]);
-                            return Err(anyhow!("Message invalid: {e}: {h_msg}"))
-                        },
-                    }
                 }
                 Ok(Err(err)) => {
                     println!("BATTERY: Notification error: {err}");
