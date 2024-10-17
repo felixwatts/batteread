@@ -1,18 +1,12 @@
 use anyhow::anyhow;
-use bluest::btuuid::characteristics;
 use bluest::Adapter;
 use bluest::AdvertisingDevice;
 use bluest::Characteristic;
-use bluest::Device;
 use bluest::Service;
 use bluest::Uuid;
 use crc16::{State, MODBUS};
-use futures_util::Stream;
-use futures_util::{pin_mut, StreamExt};
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
-use tokio::time::timeout;
-use tokio::time::{sleep, Duration};
+use futures_util::StreamExt;
+use tokio::time::Duration;
 
 // This code reads some status data from a LiFePo4 battery manufactured by Li-ion and sold around the year 2022
 //
