@@ -1,12 +1,14 @@
 use anyhow::anyhow;
-use bluest::Adapter;
-use bluest::AdvertisingDevice;
-use bluest::Characteristic;
-use bluest::Service;
-use bluest::Uuid;
+use bluer::gatt::CharacteristicReader;
+use bluer::gatt::CharacteristicWriter;
+use bluer::Uuid;
+use bluer::{gatt::remote::Characteristic, AdapterEvent, Device};
 use crc16::{State, MODBUS};
-use futures_util::StreamExt;
-use tokio::time::Duration;
+use futures_util::{pin_mut, StreamExt};
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::time::timeout;
+use tokio::time::{sleep, Duration};
 
 // This code reads some status data from a LiFePo4 battery manufactured by Li-ion and sold around the year 2022
 //
@@ -77,8 +79,7 @@ pub struct BatteryState {
 }
 
 pub struct BatteryClient {
-    adapter: Adapter,
-    device: AdvertisingDevice,
+    device: Device,
     write: Characteristic,
     notify: Characteristic,
 }
@@ -99,49 +100,52 @@ impl BatteryClient {
     // A verbatim message to send which requests the state of change and related data
     const REQ_SOC: [u8; 8] = [0x01, 0x03, 0xd0, 0x26, 0x00, 0x19, 0x5d, 0x0b];
 
+    pub async fn stop(self) -> anyhow::Result<()> {
+        self.device.disconnect().await?;
+        Ok(())
+    }
+
     pub async fn new() -> anyhow::Result<Self> {
+        let session = bluer::Session::new().await?;
+        let adapter = session.default_adapter().await?;
+        adapter.set_powered(true).await?;
+        let discover = adapter.discover_devices().await?;
+        pin_mut!(discover);
 
-        let adapter = Adapter::default().await.ok_or(anyhow!("Bluetooth adapter not found"))?;
-        adapter.wait_available().await?;
-    
-        let filter = [Self::nordic_uart_service_id()];
-        let mut scan = adapter.scan(&filter).await?;
-
-        let device = loop {
-            let next = scan.next().await;
-            if let Some(device) = next{
-                if device.device.name().as_deref().unwrap_or("(unknown)") == Self::BLE_DEVICE_NAME {
-                    break device;
+        while let Ok(Some(evt)) = timeout(Duration::from_millis(30000), discover.next()).await {
+            if let AdapterEvent::DeviceAdded(addr) = evt {
+                let device = adapter.device(addr)?;
+                if device.name().await?.unwrap_or_default() == Self::BLE_DEVICE_NAME {
+                    let write = Self::find_characteristic(
+                        &device,
+                        Self::nordic_uart_write_characteristic_id(),
+                    )
+                    .await?
+                    .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
+                    let notify = Self::find_characteristic(
+                        &device,
+                        Self::nordic_uart_notify_characteristic_id(),
+                    )
+                    .await?
+                    .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
+                    return Ok(Self {
+                        device,
+                        write,
+                        notify,
+                    });
                 }
             }
-        };
+        }
 
-        drop(scan);
-
-        let services = device.device.services().await?;
-        let write = Self::find_characteristic(&services, Self::nordic_uart_write_characteristic_id())
-            .await?
-            .ok_or(anyhow!("Cannot find Nordic UART write characteristic"))?;
-        let notify = Self::find_characteristic(&services, Self::nordic_uart_notify_characteristic_id())
-            .await?
-            .ok_or(anyhow!("Cannot find Nordic UART notify characteristic"))?;
-
-        Ok(
-            Self{
-                adapter,
-                device,
-                write,
-                notify
-            }
-        )
+        Err(anyhow!("Failed to initialize bluetooth connection"))
     }
 
     pub async fn fetch_state(&mut self) -> anyhow::Result<BatteryState> {
+        Self::try_connect(&self.device).await?;
 
-        self.try_connect().await?;
-
+        let mut reader = self.notify.notify_io().await?;
         self.write_msg(&Self::REQ_SOC).await?;
-        let rsp = self.read_message().await?;
+        let rsp = Self::read_message(&mut reader).await?;
         let nums: Vec<u16> = rsp
             .chunks(2)
             .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
@@ -154,7 +158,8 @@ impl BatteryClient {
         let cycles_count = nums[19];
 
         self.write_msg(&Self::REQ_VOLTAGES).await?;
-        let rsp = self.read_message().await?;
+        let rsp = Self::read_message(&mut reader).await?;
+
         let nums: Vec<u16> = rsp
             .chunks(2)
             .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
@@ -179,18 +184,22 @@ impl BatteryClient {
         let h = hex::encode(full_msg_bytes);
         println!("BATTERY: TX: {h}");
 
-        self.write.write(full_msg_bytes).await?;
+        let mut writer = self.write.write_io().await?;
+        let written = writer.write(full_msg_bytes).await?;
+
+        if written != full_msg_bytes.len() {
+            return Err(anyhow!("Failed to write all bytes"));
+        }
 
         Ok(())
     }
 
-    async fn read_message(&self) -> anyhow::Result<Vec<u8>> {
-        let mut reader = self.notify.notify().await?;
+    async fn read_message(reader: &mut CharacteristicReader) -> anyhow::Result<Vec<u8>> {
+        let mut buf = vec![0u8; reader.mtu()];
         let mut msg = Vec::<u8>::new();
-
         loop {
             let read_result =
-                tokio::time::timeout(Duration::from_secs(15), reader.next()).await;
+                tokio::time::timeout(Duration::from_secs(15), reader.read(&mut buf)).await;
 
             match read_result {
                 Err(_) => {
@@ -208,20 +217,20 @@ impl BatteryClient {
                         }
                     }
                 }
-                Ok(None) => {
+                Ok(Ok(0)) => {
                     // End of stream
 
                     println!("BATTERY: End of notification stream");
 
                     return Err(anyhow!("end of notification stream"));
                 }
-                Ok(Some(Ok(data))) => {
-                    let h_notification = hex::encode(&data);
+                Ok(Ok(read)) => {
+                    let h_notification = hex::encode(&buf[0..read]);
                     println!("BATTERY: RX notification: 0x{h_notification}");
 
-                    msg.extend_from_slice(&data);
+                    msg.extend_from_slice(&buf[0..read]);
                 }
-                Ok(Some(Err(err))) => {
+                Ok(Err(err)) => {
                     println!("BATTERY: Notification error: {err}");
 
                     return Err(err.into());
@@ -230,11 +239,11 @@ impl BatteryClient {
         }
     }
 
-    async fn try_connect(&self) -> anyhow::Result<()> {
-        if !self.device.device.is_connected().await {
+    async fn try_connect(device: &Device) -> anyhow::Result<()> {
+        if !device.is_connected().await? {
             let mut retries = 2;
             loop {
-                match self.adapter.connect_device(&self.device.device).await {
+                match device.connect().await {
                     Ok(()) => return Ok(()),
                     Err(err) if retries > 0 => {
                         println!("BATTERY: Failed to connect: {err}");
@@ -295,15 +304,22 @@ impl BatteryClient {
     }
 
     async fn find_characteristic(
-        services: &[Service],
+        device: &Device,
         char_id: Uuid,
     ) -> anyhow::Result<Option<Characteristic>> {
-
-        for s in services.iter() {
-            let characteristics = s.characteristics().await?;
-            for c in characteristics.iter() {
-                if c.uuid() == char_id {
-                    return Ok(Some(c.clone()))
+        let uuids = device.uuids().await?.unwrap_or_default();
+        if uuids.contains(&Self::nordic_uart_service_id()) {
+            sleep(Duration::from_secs(2)).await;
+            Self::try_connect(device).await?;
+            for service in device.services().await? {
+                let uuid = service.uuid().await?;
+                if uuid == Self::nordic_uart_service_id() {
+                    for char in service.characteristics().await? {
+                        let uuid = char.uuid().await?;
+                        if uuid == char_id {
+                            return Ok(Some(char));
+                        }
+                    }
                 }
             }
         }
