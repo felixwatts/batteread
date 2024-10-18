@@ -6,7 +6,7 @@ license = "MIT"
 description = "Read status data from certain models of LiFePO4 Battery Management Systems over Bluetooth Low Energy. Tested with a battery made by li-gen.net."
 repository = "https://github.com/felixwatts/batteread"
 readme = "README.md"
-keywords = ["BMS", "BLE", "LiFePO4", "li-gen", "bluetooth", "voltage", "state of charge"]
+keywords = ["battery", "bluetooth", "li-gen", "BMS", "BLE"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
