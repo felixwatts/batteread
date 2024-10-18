@@ -1,19 +1,3 @@
-//! Read status data from certain models of LiFePO4 Battery Management Systems over Bluetooth Low Energy
-//! 
-//! Tested with a 400ah 24v battery manufactured by <https://www.li-gen.net/> and sold around the year 2022.
-//! 
-//! The BMS has a BLE interface. On top of that the NordicUART protocol is used for serial communication.
-//! On top of that there seems to be a proprietary request-response protocol which I have attempted to partially
-//! reverse engineer.
-//! 
-//! Currently the following data can be accessed:
-//! 
-//! - State of charge (%)
-//! - Residual capacity (Ah)
-//! - Cycles (count)
-//! - Cell voltages (v)
-//! - Battery voltage (v)
-
 use anyhow::anyhow;
 use bluest::Adapter;
 use bluest::AdvertisingDevice;
@@ -26,20 +10,9 @@ use futures_util::StreamExt;
 use tokio::time::timeout;
 use tokio::time::Duration;
 
-/// The reported state of the battery
-#[derive(Debug)]
-pub struct BatteryState {
-    /// The state of charge of the battery in %
-    pub state_of_charge_pct: u16,
-    /// The residual capacity of the battery in Ah/100
-    pub residual_capacity_cah: u16,
-    pub cycles_count: u16,
-    /// The voltage of each cell in mv. The N/A value is 61001
-    pub cell_voltage_mv: Vec<u16>,
-    /// The battery voltage in V/100
-    pub battery_voltage_cv: u16,
-}
-
+use crate::message::soc_message::SocMessage;
+use crate::message::voltages_message::VoltagesMessage;
+use crate::BatteryState;
 
 pub struct BatteryClient {
     adapter: Adapter,
@@ -56,10 +29,7 @@ impl BatteryClient {
     const NORDIC_UART_NOTIFY_CHARACTERISTIC_ID: &'static str =
         "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
     const MSG_HEADER: [u8; 2] = [0x01, 0x03];
-    // A verbatim message to send which requests state of voltages
-    const REQ_VOLTAGES: [u8; 8] = [0x01, 0x03, 0xd0, 0x00, 0x00, 0x26, 0xfc, 0xd0];
-    // A verbatim message to send which requests the state of change and related data
-    const REQ_SOC: [u8; 8] = [0x01, 0x03, 0xd0, 0x26, 0x00, 0x19, 0x5d, 0x0b];
+
     // How long to wait without any notifications before considering the message completely received
     const NOTIFICATION_TIMEOUT_S: u64 = 5;
 
@@ -69,6 +39,9 @@ impl BatteryClient {
         Ok(())
     }
 
+    /// Create a new `BatteryClient`, which includes attempting to discover the device.
+    /// Assumes the name of the bluetooth device is `BT_HC6172`. If yours has a different
+    /// name then use the `new` method instead.
     pub async fn new_default_name() -> anyhow::Result<Self> {
         Self::new(Self::BLE_DEVICE_NAME).await
     }
@@ -115,37 +88,18 @@ impl BatteryClient {
     pub async fn fetch_state(&mut self) -> anyhow::Result<BatteryState> {
         self.try_connect().await?;
 
-        // let reader = self.notify.notify().await?;
+        let rsp = self.request_response(&crate::message::soc_message::REQUEST).await?;
+        let soc_message = SocMessage::new(rsp);
 
-        let rsp = self.request_response(&Self::REQ_SOC).await?;
-
-        let nums: Vec<u16> = rsp
-            .chunks(2)
-            .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
-            .collect();
-
-        println!("BATTERY SOC response: {nums:?}");
-
-        let state_of_charge_pct = nums[14];
-        let residual_capacity_cah = nums[16];
-        let cycles_count = nums[19];
-
-        let rsp = self.request_response(&Self::REQ_VOLTAGES).await?;
-        let nums: Vec<u16> = rsp
-            .chunks(2)
-            .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
-            .collect();
-        println!("BATTERY Voltages response: {nums:?}");
-
-        let cell_voltage_mv = nums[0..32].to_vec();
-        let battery_voltage_cv = nums[37];
+        let rsp = self.request_response(&crate::message::voltages_message::REQUEST).await?;
+        let voltages_message = VoltagesMessage::new(rsp);
 
         let state = BatteryState {
-            state_of_charge_pct,
-            residual_capacity_cah,
-            cycles_count,
-            cell_voltage_mv,
-            battery_voltage_cv,
+            state_of_charge_pct: soc_message.state_of_charge_pct(),
+            residual_capacity_cah: soc_message.residual_capacity_cah(),
+            cycles_count: soc_message.cycles_count(),
+            cell_voltage_mv: voltages_message.cell_voltage_mv(),
+            battery_voltage_cv: voltages_message.battery_voltage_cv(),
         };
 
         Ok(state)
@@ -164,6 +118,7 @@ impl BatteryClient {
         Err(anyhow!("Device not found"))
     }
 
+    /// Send a request to the device and return the response.
     async fn request_response(&mut self, rq: &[u8]) -> anyhow::Result<Vec<u8>> {
         let reader = self.notify.notify().await?;
 
@@ -195,7 +150,6 @@ impl BatteryClient {
     /// Unfortunately this introduces a minimum time to read a message of a few seconds.
     /// However, it is the only reliable way I've found.
     async fn read_message<T: Stream<Item = Result<Vec<u8>, bluest::Error>> + Send + Unpin>(mut reader: T) -> anyhow::Result<Vec<u8>> {
-        // let mut reader = self.notify.notify().await?;
         let mut msg = Vec::<u8>::new();
         loop {
             let read_result =
@@ -203,7 +157,7 @@ impl BatteryClient {
 
             match read_result {
                 Err(_) => {
-                    // timeout
+                    // timeout, consider the message completely received
                     let parse_msg_result = Self::try_parse_msg(&msg[..]);
                     match parse_msg_result {
                         TryParseMessageResult::Ok(payload) => return Ok(payload),
