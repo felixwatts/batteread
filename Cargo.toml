@@ -14,7 +14,7 @@ keywords = ["battery", "bluetooth", "li-gen", "BMS", "BLE"]
 tokio = { version = "1.40.0", features = ["time", "io-util"] }
 futures-util = "0.3.31"
 crc16 = "0.4.0"
-hex = "*"
+hex = "0.4.3"
 bluest = "0.6.7"
 anyhow = "1.0.90"
 
