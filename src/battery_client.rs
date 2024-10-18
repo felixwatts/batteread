@@ -1,3 +1,19 @@
+//! Read status data from certain models of LiFePO4 Battery Management Systems over Bluetooth Low Energy
+//! 
+//! Tested with a 400ah 24v battery manufactured by <https://www.li-gen.net/> and sold around the year 2022.
+//! 
+//! The BMS has a BLE interface. On top of that the NordicUART protocol is used for serial communication.
+//! On top of that there seems to be a proprietary request-response protocol which I have attempted to partially
+//! reverse engineer.
+//! 
+//! Currently the following data can be accessed:
+//! 
+//! - State of charge (%)
+//! - Residual capacity (Ah)
+//! - Cycles (count)
+//! - Cell voltages (v)
+//! - Battery voltage (v)
+
 use anyhow::anyhow;
 use bluer::gatt::CharacteristicReader;
 use bluer::gatt::CharacteristicWriter;
@@ -10,82 +26,26 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 use tokio::time::{sleep, Duration};
 
-// This code reads some status data from a LiFePo4 battery manufactured by Li-ion and sold around the year 2022
-//
-// The BMS has a BLE (bluetooth) interface. On top of that the NordicUART protocol is used for serial communication.
-// On top of that there seems to be a proprietary request-response protocol which I have attempted to partially
-// reverse engineer.
-//
-// Details of the proprietary protocol:
-//
-// The server waits for requests on the NordicUART WRITE characteristic. It sends responses via the NordicUART NOTIFY characteristic.
-//
-// Messages from client to server (requests), I do not understand the structure of these but I just send verbatim what I observed
-// the official android client sending.
-//
-// Messages from the server to the client are sent in response to requests. Each response may be split over several
-// NordicUART notifications. The message structure is:
-//
-// [ 2 bytes: header ] [ 1 byte: payload length P ] [ P bytes: payload ] [ 2 bytes checksum ]
-//
-// The header is always [ 0x01, 0x03 ] for the requests I send.
-// All numbers are big endian, unsigned.
-// The checksum is a MODBUS checksum of the whole of the message up to the start of the checksum, but the two bytes are reversed.
-//
-// It is necessary to check the checksum as messages are quite commonly corrupted.
-//
-// There are two types of request-response that I use:
-//
-// VOLTAGES
-//
-// Request: 0x0103d0000026fcd0
-// Response:
-// bytes 0-64: cell voltages in mV, 32 * u16
-// bytes 76-77: battery voltage in mv, u16
-//
-// STATE_OF_CHARGE
-//
-// Request: 0x0103d02600195d0b
-// Response:
-//  bytes 28-29: State of charge in %, u16
-//  bytes 32-33: Residual capacity in mAh, u16
-//  bytes 38-39: Cycles (count), u16
-
-// Failed rq/rsp:
-//
-// TX: 0103d0000026fcd0
-// RX notification
-// "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7f"
-// Message INCOMPLETE
-// RX notification
-// "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49"
-// Message INCOMPLETE
-// RX notification
-// "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49"
-// Message INCOMPLETE
-// RX notification
-// "01034c0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee490d7f0d6b0008000300140ac7"
-// Message INCOMPLETE
-
-// 0d7e0d7c0d6b0d790d7b0d7e0d7c0d7fee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee49ee490d7f0d6b0008000300140ac7
-
+/// The reported state of the battery
 #[derive(Debug)]
 pub struct BatteryState {
+    /// The state of charge of the battery in %
     pub state_of_charge_pct: u16,
+    /// The residual capacity of the battery in Ah/100
     pub residual_capacity_cah: u16,
     pub cycles_count: u16,
+    /// The voltage of each cell in mv. The N/A value is 61001
     pub cell_voltage_mv: Vec<u16>,
+    /// The battery voltage in V/100
     pub battery_voltage_cv: u16,
 }
+
 
 pub struct BatteryClient {
     device: Device,
     write: Characteristic,
     notify: Characteristic,
 }
-
-// 6e400002-b5a3-f393-e0a9-e50e24dcca9e WRITE_WITHOUT_RESPONSE | WRITE : UART write?
-// 6e400003-b5a3-f393-e0a9-e50e24dcca9e NOTIFY : UART read?
 
 impl BatteryClient {
     const BLE_DEVICE_NAME: &'static str = "BT_HC6172";
@@ -99,12 +59,16 @@ impl BatteryClient {
     const REQ_VOLTAGES: [u8; 8] = [0x01, 0x03, 0xd0, 0x00, 0x00, 0x26, 0xfc, 0xd0];
     // A verbatim message to send which requests the state of change and related data
     const REQ_SOC: [u8; 8] = [0x01, 0x03, 0xd0, 0x26, 0x00, 0x19, 0x5d, 0x0b];
+    // How long to wait without any notifications before considering the message completely received
+    const NOTIFICATION_TIMEOUT_S: i32 = 5;
 
+    /// Disconnect from the battery
     pub async fn stop(self) -> anyhow::Result<()> {
         self.device.disconnect().await?;
         Ok(())
     }
 
+    /// Create a new `BatteryClient`, which includes attempting to discover the device.
     pub async fn new() -> anyhow::Result<Self> {
         let session = bluer::Session::new().await?;
         let adapter = session.default_adapter().await?;
@@ -140,6 +104,7 @@ impl BatteryClient {
         Err(anyhow!("Failed to initialize bluetooth connection"))
     }
 
+    /// Read the current state from the battery
     pub async fn fetch_state(&mut self) -> anyhow::Result<BatteryState> {
         Self::try_connect(&self.device).await?;
 
@@ -180,6 +145,7 @@ impl BatteryClient {
         Ok(state)
     }
 
+    /// Send the given bytes to the battery, via the Nordic UART write characteristic
     async fn write_msg(&mut self, full_msg_bytes: &[u8]) -> anyhow::Result<()> {
         let h = hex::encode(full_msg_bytes);
         println!("BATTERY: TX: {h}");
@@ -194,12 +160,29 @@ impl BatteryClient {
         Ok(())
     }
 
+    /// Attempt to read a whole message from the device.
+    /// 
+    /// Messages are delivered over multiple notification events. Although in theory it 
+    /// is possible to know when you've received the whole message
+    /// by using the message header information, that doesn't work in practice because
+    /// you often get duplicated notifications as well as corrupted notifications.
+    /// As a result, sometimes there are more notifcations to receive after the specifed
+    /// message length has been reached and conversely, sometimes the notifcations
+    /// stop before the specified message length is reached.
+    /// 
+    /// To deal with this a timeout mechanism is used. Notifications are read
+    /// and appended to the received message until no more notifications are received 
+    /// for a short time. Then the message is considered complete. If it is corrupted then
+    /// that will be detected later during message parsing.
+    /// 
+    /// Unfortunately this introduces a minimum time to read a message of a few seconds.
+    /// However, it is the only reliable way I've found.
     async fn read_message(reader: &mut CharacteristicReader) -> anyhow::Result<Vec<u8>> {
         let mut buf = vec![0u8; reader.mtu()];
         let mut msg = Vec::<u8>::new();
         loop {
             let read_result =
-                tokio::time::timeout(Duration::from_secs(15), reader.read(&mut buf)).await;
+                tokio::time::timeout(Duration::from_secs(NOTIFICATION_TIMEOUT_S), reader.read(&mut buf)).await;
 
             match read_result {
                 Err(_) => {
@@ -239,36 +222,15 @@ impl BatteryClient {
         }
     }
 
-    async fn try_connect(device: &Device) -> anyhow::Result<()> {
-        if !device.is_connected().await? {
-            let mut retries = 2;
-            loop {
-                match device.connect().await {
-                    Ok(()) => return Ok(()),
-                    Err(err) if retries > 0 => {
-                        println!("BATTERY: Failed to connect: {err}");
-                        retries -= 1;
-                    }
-                    Err(err) => return Err(err.into()),
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn nordic_uart_service_id() -> Uuid {
-        Uuid::parse_str(Self::NORDIC_UART_SERVICE_ID).unwrap()
-    }
-
-    fn nordic_uart_write_characteristic_id() -> Uuid {
-        Uuid::parse_str(Self::NORDIC_UART_WRITE_CHARACTERISTIC_ID).unwrap()
-    }
-
-    fn nordic_uart_notify_characteristic_id() -> Uuid {
-        Uuid::parse_str(Self::NORDIC_UART_NOTIFY_CHARACTERISTIC_ID).unwrap()
-    }
-
+    /// Attempt to parse the given message bytes returning the payload.
+    /// 
+    /// The message format is:
+    /// 
+    /// Start Byte | End Byte     | Meaning
+    /// 0          | 1            | A constant header with value [0x01, 0x03]
+    /// 2          | 2            | The length in bytes of the rest of the message after this byte
+    /// 3          | x            | The payload
+    /// x+1        | x+2          | A MODBUS CRC over the bytes 0-x
     fn try_parse_msg(buffer: &[u8]) -> TryParseMessageResult {
         if buffer.len() < 3 {
             return TryParseMessageResult::Incomplete;
@@ -298,9 +260,39 @@ impl BatteryClient {
         TryParseMessageResult::Ok(payload)
     }
 
+    /// Compute the CRC check value for the given bytes
     fn crc(data: &[u8]) -> [u8; 2] {
-        let crc_bytes_reversed = State::<MODBUS>::calculate(data).to_be_bytes();
-        [crc_bytes_reversed[1], crc_bytes_reversed[0]]
+        State::<MODBUS>::calculate(data).to_le_bytes()
+    }
+
+    fn nordic_uart_service_id() -> Uuid {
+        Uuid::parse_str(Self::NORDIC_UART_SERVICE_ID).unwrap()
+    }
+
+    fn nordic_uart_write_characteristic_id() -> Uuid {
+        Uuid::parse_str(Self::NORDIC_UART_WRITE_CHARACTERISTIC_ID).unwrap()
+    }
+
+    fn nordic_uart_notify_characteristic_id() -> Uuid {
+        Uuid::parse_str(Self::NORDIC_UART_NOTIFY_CHARACTERISTIC_ID).unwrap()
+    }
+
+    async fn try_connect(device: &Device) -> anyhow::Result<()> {
+        if !device.is_connected().await? {
+            let mut retries = 2;
+            loop {
+                match device.connect().await {
+                    Ok(()) => return Ok(()),
+                    Err(err) if retries > 0 => {
+                        println!("BATTERY: Failed to connect: {err}");
+                        retries -= 1;
+                    }
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn find_characteristic(
