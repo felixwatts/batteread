@@ -2,11 +2,15 @@
 name = "batteread"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "Read status data from certain models of LiFePO4 Battery Management Systems over Bluetooth Low Energy. Tested with a battery made by li-gen.net."
+repository = "https://github.com/felixwatts/batteread"
+readme = "README.md"
+keywords = ["BMS", "BLE", "LiFePO4", "li-gen", "bluetooth", "voltage", "state of charge"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# bluetooth-serial-port-async = { version = "*", git = "https://github.com/felixwatts/bluetooth-serial-port-async.git", features = ["tokio"], default-features = false }
 tokio = { version = "1.40.0", features = ["time", "io-util"] }
 futures-util = "0.3.31"
 crc16 = "0.4.0"
