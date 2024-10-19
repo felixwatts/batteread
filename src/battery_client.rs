@@ -9,6 +9,7 @@ use futures_util::Stream;
 use futures_util::StreamExt;
 use tokio::time::timeout;
 use tokio::time::Duration;
+use uuid::uuid;
 
 use crate::message::soc_message::SocMessage;
 use crate::message::voltages_message::VoltagesMessage;
@@ -23,11 +24,9 @@ pub struct BatteryClient {
 
 impl BatteryClient {
     const BLE_DEVICE_NAME: &'static str = "BT_HC6172";
-    const NORDIC_UART_SERVICE_ID: &'static str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-    const NORDIC_UART_WRITE_CHARACTERISTIC_ID: &'static str =
-        "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-    const NORDIC_UART_NOTIFY_CHARACTERISTIC_ID: &'static str =
-        "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+    const NORDIC_UART_SERVICE_ID: Uuid = uuid!("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+    const NORDIC_UART_WRITE_CHARACTERISTIC_ID: Uuid = uuid!("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+    const NORDIC_UART_NOTIFY_CHARACTERISTIC_ID: Uuid = uuid!("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
     const MSG_HEADER: [u8; 2] = [0x01, 0x03];
 
     // How long to wait without any notifications before considering the message completely received
@@ -61,19 +60,19 @@ impl BatteryClient {
 
         let nordic_uart_service = device
             .device
-            .discover_services_with_uuid(Self::nordic_uart_service_id())
+            .discover_services_with_uuid(Self::NORDIC_UART_SERVICE_ID)
             .await?
             .first()
             .ok_or(anyhow!("The specified device does not support the Nordic UART service."))?
             .clone();
         let write = nordic_uart_service
-            .discover_characteristics_with_uuid(Self::nordic_uart_write_characteristic_id())
+            .discover_characteristics_with_uuid(Self::NORDIC_UART_WRITE_CHARACTERISTIC_ID)
             .await?
             .first()
             .ok_or(anyhow!("The specified device does not support the Nordic UART write characterstic."))?
             .clone();
         let notify = nordic_uart_service
-            .discover_characteristics_with_uuid(Self::nordic_uart_notify_characteristic_id())
+            .discover_characteristics_with_uuid(Self::NORDIC_UART_NOTIFY_CHARACTERISTIC_ID)
             .await?
             .first()
             .ok_or(anyhow!("The specified device does not support the Nordic UART notify characterstic."))?
@@ -106,7 +105,7 @@ impl BatteryClient {
     }
 
     async fn discover_device(name: &str, adapter: &Adapter) -> anyhow::Result<AdvertisingDevice> {
-        let required_services =  [Self::nordic_uart_service_id()];
+        let required_services =  [Self::NORDIC_UART_SERVICE_ID];
         let mut adapter_events = adapter.scan(&required_services).await?;
         while let Some(device) = timeout(Duration::from_secs(30), adapter_events.next()).await.map_err(|_| anyhow!("Device not found"))? {
             let device_name = device.device.name_async().await?;
@@ -234,18 +233,6 @@ impl BatteryClient {
     /// Compute the CRC check value for the given bytes
     fn crc(data: &[u8]) -> [u8; 2] {
         State::<MODBUS>::calculate(data).to_le_bytes()
-    }
-
-    fn nordic_uart_service_id() -> Uuid {
-        Uuid::parse_str(Self::NORDIC_UART_SERVICE_ID).unwrap()
-    }
-
-    fn nordic_uart_write_characteristic_id() -> Uuid {
-        Uuid::parse_str(Self::NORDIC_UART_WRITE_CHARACTERISTIC_ID).unwrap()
-    }
-
-    fn nordic_uart_notify_characteristic_id() -> Uuid {
-        Uuid::parse_str(Self::NORDIC_UART_NOTIFY_CHARACTERISTIC_ID).unwrap()
     }
 
     async fn try_connect(&self) -> anyhow::Result<()> {
